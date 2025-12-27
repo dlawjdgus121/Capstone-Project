@@ -1,0 +1,238 @@
+.card-swap-container {
+
+  position: absolute;
+
+ 
+
+  /* ********************************************* */
+
+  /* 오른쪽 정렬 유지 */
+
+  /* ********************************************* */
+
+  right: 25px;
+
+
+  /* Y축 중앙 정렬을 위해 top: 50%로 변경해야 합니다. */
+
+  top: 100%; /* 100% -> 50%로 변경 */
+
+  transform: translate(0, -50%); /* Y축 중앙 정렬 유지 */
+
+
+
+  width: 450px;
+
+  height: 450px;
+
+  perspective: 900px;
+
+  overflow: visible;
+
+}
+
+
+
+.card {
+
+  position: absolute;
+
+  /* GSAP에서 xPercent: -50, yPercent: -50로 중앙 정렬을 시작합니다. */
+
+  /* left: 200% 대신 기본값인 50%로 되돌려야 합니다. */
+
+  top: 50%;
+
+  left: 50%; /* 200% -> 50%로 변경 */
+
+ 
+
+  border-radius: 30px;
+
+  border: 7px solid #fff;
+
+  background: #000;
+
+
+
+  transform-style: preserve-3d;
+
+  will-change: transform;
+
+  backface-visibility: hidden;
+
+  -webkit-backface-visibility: hidden;
+
+ display: flex;
+
+  flex-direction: column; /* 내용을 수직으로 배열 */
+
+  align-items: center;
+
+  /* justify-content: center; */ /* 만약 수직 중앙에 두고 싶다면 이 줄을 다시 활성화하세요. */
+
+  /* 카드 안의 텍스트 스타일 (선택 사항) */
+
+  padding: 30px;
+
+  color: #fff;
+
+}
+
+
+
+@media (max-width: 768px) {
+
+  .card-swap-container {
+
+    transform: scale(0.75) translate(25%, 25%);
+
+  }
+
+}
+
+
+
+@media (max-width: 480px) {
+
+  .card-swap-container {
+
+    transform: scale(0.55) translate(25%, 25%);
+
+  }
+
+}
+
+.card h3 {
+
+    /* 기존 카드 내부 텍스트 스타일이 있다면 덮어쓰거나 조정합니다. */
+
+    margin: 5px 0;
+
+    padding: 0;
+
+}
+
+.card p {
+
+    /* ************************************************** */
+
+    /* 설명 문구 글자 크기 증가 (예: 1.0rem -> 1.1rem) */
+
+    font-size: 1.5rem;
+
+    /* ************************************************** */
+
+    padding: 30px;
+
+    margin: 5px 0 0 0; /* 상단 마진만 주고 나머지는 0 */
+
+}
+
+
+
+/* ************************************************** */
+
+/* 새로 추가: 아이콘과 텍스트 그룹 스타일 */
+
+/* ************************************************** */
+
+.card-title-group {
+
+    /* 아이콘과 텍스트를 한 줄에 배치 */
+
+    display: flex;
+
+    align-items: center; /* 수직 중앙 정렬 */
+
+   
+
+    /* 아이콘과 텍스트 사이 간격 (예: 8px) */
+
+    gap: 8px;
+
+   
+
+    /* 이미지처럼 전체 그룹을 약간 왼쪽으로 옮겨 배치 */
+
+    /* 현재 카드는 텍스트 중앙 정렬이므로, 이 그룹만 약간 조정 */
+
+    margin-right: 10px;
+
+    margin-bottom: 5px; /* 아래 내용과 간격 */
+
+   
+
+    /* 텍스트 크기 설정 */
+
+    font-size: 1.6rem;
+
+    font-weight: bold;
+
+}
+
+
+
+.card-title-group span {
+
+    /* 텍스트 자체에는 특별한 스타일 없이 글자만 남김 */
+
+    line-height: 1; /* 높이 맞추기 */
+
+}
+
+
+
+.card-icon {
+
+    /* 아이콘의 크기 설정 */
+
+    font-size: 1.2rem;
+
+    color: #ffffff; /* 아이콘 색상 */
+
+}
+
+
+
+/* Smooth 아이콘은 이미지처럼 원형 마크를 사용했으므로 크기 조정 */
+
+.smooth-icon {
+
+    font-size: 0.8rem;
+
+}
+
+.card-image {
+
+    /* ************************************************** */
+
+    /* 이미지 크기 확
+
+    대 (기존 60px -> 300px 또는 원하시는 만큼) */
+
+    width: calc(100% + 50px);
+
+   width: 100%;
+
+    height: 450px;
+
+    /* 만약 이미지 원본 비율을 그대로 쓰고 싶다면 height: auto; 로 설정하세요 */
+
+    /* ************************************************** */
+
+    object-fit: cover;
+
+    /* 이미지가 찌그러지지 않고 비율을 유지하며 칸에 맞춤 */
+
+    margin-left: -60px;
+
+    margin-right: -60px;
+
+    /* 위쪽 텍스트와의 간격도 조금 더 넓게 */
+
+    margin-top: -10px;
+
+    margin-bottom: 0;
+
+}
