@@ -11,11 +11,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # [설정] 여기만 확인하세요!
 # =========================================================
 USER_NAME = "Dayeon"  # ★ 팀원은 여기 이름만 바꾸면 됩니다!
-SERVER_URL = "https://steering-generate-organizational-tire.trycloudflare.com"
+SERVER_URL = "https://milton-nitrogen-asp-anthropology.trycloudflare.com"
 
 YOLO_URL = f"{SERVER_URL}/detect"
 VLM_URL = f"{SERVER_URL}/analyze"
-HEADERS = {"ngrok-skip-browser-warning": "true", "Connection": "close"}
+HEADERS = {"Connection": "keep-alive"}
+
+session = requests.Session()
 
 latest_detections = []
 is_vlm_running = False
@@ -30,19 +32,40 @@ def request_yolo(frame):
         return
 
     try:
-        _, img_encoded = cv2.imencode('.jpg', frame)
-        response = requests.post(
+        # [참고] 화질 100은 용량이 커서 네트워크 지연이 높게 나올 겁니다.
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 100] 
+        _, img_encoded = cv2.imencode('.jpg', frame, encode_param)
+
+        # ★ 1. [수정] 출발 시간 기록 (택배 보내기 전)
+        start_time = time.time()
+
+        response = session.post(
             YOLO_URL,
             files={"file": ("frame.jpg", img_encoded.tobytes(), "image/jpeg")},
-            params={"user_id": USER_NAME}, # ★ 내 이름표 붙이기
+            params={"user_id": USER_NAME}, 
             headers=HEADERS, 
-            timeout=2, # 여유 있게 2초
+            timeout=2, 
             verify=False
         )
+        
+        # ★ 2. [수정] 도착 시간 기록 (택배 받은 후)
+        end_time = time.time()
+
         if response.status_code == 200:
-            latest_detections = response.json().get("detections", [])
-    except Exception:
-        pass # 에러 나도 조용히 넘어감 (프로그램 안 꺼지게)
+            data = response.json()
+            latest_detections = data.get("detections", [])
+            
+            # ★ 3. [수정] 네트워크 지연 시간 계산 및 로그 출력
+            # (총 왕복 시간) - (서버가 일한 시간) = (순수 네트워크 시간)
+            total_rtt = (end_time - start_time) * 1000      # ms 단위 변환
+            server_proc = data.get("server_time", 0)        # 서버에서 받아온 시간
+            network_delay = total_rtt - server_proc         # 계산된 네트워크 지연
+            
+            # 터미널에 로그 찍기
+            print(f"⚡ YOLO: 총 {total_rtt:.0f}ms (서버 {server_proc:.0f}ms + 🌐네트워크 {network_delay:.0f}ms)")
+
+    except Exception as e:
+        pass # 에러 나도 조용히 넘어감
     finally:
         is_yolo_running = False # 작업 끝!
 
