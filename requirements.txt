@@ -1,0 +1,16 @@
+
+fastapi          
+uvicorn          
+python-multipart 
+jinja2           
+httpx
+requests
+urllib3
+Pillow
+opencv-python
+numpy
+pdf2image  
+
+
+
+
