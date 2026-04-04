@@ -1,18 +1,207 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/assets/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Assembly Coach</title>
-    <!-- 실제 존재하는 CSS 파일명으로 연결 -->
-    <link rel="stylesheet" crossorigin href="/assets/index-D9vfkOYX.css">
-  </head>
-  <body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Assembly Coach - Gemini Engine</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; margin: 0; font-family: -apple-system, sans-serif; overflow: hidden; }
+        .video-container { position: relative; background: #000; width: 100%; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.1); }
+        .step-active { border-left: 4px solid #3b82f6; background: rgba(59, 130, 246, 0.1); }
+    </style>
+</head>
+<body>
     <div id="root"></div>
-    
-    <!-- 실제 존재하는 JS 파일명으로 연결 -->
-    <!-- 참고: 브라우저는 JSX를 직접 읽지 못하므로, 빌드된 이 JS 파일이 실행되어야 합니다. -->
-    <script type="module" crossorigin src="/assets/index-Ck90_sW7.js"></script>
-  </body>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function App() {
+            const isMobile = window.location.pathname.includes('mobile');
+            return isMobile ? <MobileView /> : <PCView />;
+        }
+
+        function MobileView() {
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const wsRef = useRef(null);
+            const [isConnected, setIsConnected] = useState(false);
+
+            useEffect(() => {
+                const init = async () => {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'environment', width: 640, height: 480 },
+                            audio: false
+                        });
+                        if (videoRef.current) videoRef.current.srcObject = stream;
+                        
+                        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+                        wsRef.current = new WebSocket(wsUrl);
+                        wsRef.current.onopen = () => setIsConnected(true);
+                        wsRef.current.onclose = () => setIsConnected(false);
+
+                        const loop = () => {
+                            if (wsRef.current?.readyState === 1 && videoRef.current?.readyState === 4) {
+                                const ctx = canvasRef.current.getContext('2d');
+                                ctx.drawImage(videoRef.current, 0, 0, 640, 480);
+                                canvasRef.current.toBlob(b => wsRef.current.send(b), 'image/jpeg', 0.4);
+                            }
+                            setTimeout(loop, 200);
+                        };
+                        loop();
+                    } catch (e) { alert("카메라 권한 필요"); }
+                };
+                init();
+            }, []);
+
+            return (
+                <div className="video-container">
+                    <video ref={videoRef} autoPlay playsInline muted />
+                    <canvas ref={canvasRef} style={{ display: 'none' }} width="640" height="480" />
+                    <div className={`absolute bottom-10 px-8 py-4 rounded-full text-white font-bold shadow-2xl transition-all ${isConnected ? 'bg-blue-600 scale-110' : 'bg-red-600'}`}>
+                        {isConnected ? '● AI 조립 코칭 전송 중' : '서버 연결 대기...'}
+                    </div>
+                </div>
+            );
+        }
+
+        function PCView() {
+            const [view, setView] = useState('landing'); 
+            const [serverStatus, setServerStatus] = useState({ ai_response: '대기 중...', steps: [], current_idx: 0, has_frame: false });
+            const [isUploading, setIsUploading] = useState(false);
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                const interval = setInterval(async () => {
+                    try {
+                        const res = await fetch('/status');
+                        const data = await res.json();
+                        setServerStatus(data);
+                        if (data.is_analyzed && view === 'upload') setView('coach');
+                    } catch (e) {}
+                }, 1500);
+                return () => clearInterval(interval);
+            }, [view]);
+
+            const handleUpload = async (e) => {
+                const files = e.target.files;
+                if (!files.length) return;
+                setIsUploading(true);
+                const formData = new FormData();
+                for (let f of files) formData.append('files', f);
+                try {
+                    await fetch('/process-manual', { method: 'POST', body: formData });
+                } catch (e) { alert("업로드 오류"); setIsUploading(false); }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-900 text-white flex flex-col p-8">
+                    {view === 'landing' && (
+                        <div className="flex-1 flex flex-col items-center justify-center text-center">
+                            <h1 className="text-8xl font-black mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-cyan-300 tracking-tighter">
+                                GEMINI COACH
+                            </h1>
+                            <p className="text-2xl text-slate-400 mb-12 max-w-2xl">
+                                AI가 당신의 조립 매뉴얼을 읽고,<br/>실시간 카메라 화면을 보며 단계별로 가이드합니다.
+                            </p>
+                            <button onClick={() => setView('upload')} className="bg-blue-600 hover:bg-blue-500 px-16 py-6 rounded-3xl font-black text-3xl shadow-[0_0_50px_-12px_rgba(59,130,246,0.5)] transition-all">
+                                시작하기
+                            </button>
+                        </div>
+                    )}
+
+                    {view === 'upload' && (
+                        <div className="flex-1 flex flex-col items-center justify-center">
+                            <div className="w-full max-w-2xl glass p-12 rounded-[3rem] text-center shadow-2xl">
+                                <h2 className="text-4xl font-black mb-6">매뉴얼 업로드</h2>
+                                <p className="text-slate-400 mb-10 text-lg">설명서의 모든 페이지 이미지를 선택해 주세요.</p>
+                                <input type="file" multiple ref={fileInputRef} onChange={handleUpload} className="hidden" />
+                                <div 
+                                    onClick={() => fileInputRef.current.click()}
+                                    className="border-4 border-dashed border-slate-700 rounded-[2rem] p-20 cursor-pointer hover:border-blue-500 hover:bg-slate-800/50 transition-all group"
+                                >
+                                    {isUploading ? (
+                                        <div className="flex flex-col items-center gap-4">
+                                            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                            <p className="text-blue-400 font-bold text-2xl">Gemini AI가 분석 중...</p>
+                                        </div>
+                                    ) : (
+                                        <div className="text-slate-500 group-hover:text-blue-400">
+                                            <p className="text-6xl mb-6">📄</p>
+                                            <p className="text-xl font-bold">파일 선택 (JPG, PNG)</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {view === 'coach' && (
+                        <div className="w-full max-w-[1600px] mx-auto flex gap-8 h-[85vh] animate-in fade-in slide-in-from-bottom-10 duration-700">
+                            {/* 왼쪽: AI 조립 단계 */}
+                            <div className="w-1/4 glass rounded-[3rem] p-10 flex flex-col shadow-2xl overflow-hidden">
+                                <h2 className="text-3xl font-black mb-10 text-blue-400 flex items-center gap-3">
+                                    <div className="w-2 h-8 bg-blue-500 rounded-full"></div>
+                                    ASSEMBLY STEPS
+                                </h2>
+                                <div className="flex-1 space-y-6 overflow-y-auto pr-4 custom-scrollbar">
+                                    {serverStatus.steps.map((step, idx) => (
+                                        <div key={idx} className={`p-8 rounded-[2rem] transition-all duration-500 ${idx === serverStatus.current_idx ? 'step-active shadow-xl scale-105 bg-slate-800/80 ring-1 ring-blue-500/50' : 'opacity-30'}`}>
+                                            <p className="font-black text-sm text-blue-500 mb-2">STEP {idx + 1}</p>
+                                            <p className="font-bold text-2xl mb-3 text-white leading-tight">{step.title}</p>
+                                            <p className="text-slate-400 text-base leading-relaxed">{step.desc}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* 오른쪽: 메인 코칭 뷰 */}
+                            <div className="flex-1 flex flex-col gap-8">
+                                {/* AI 실시간 피드백 창 */}
+                                <div className="glass rounded-[2.5rem] p-10 border-l-[12px] border-emerald-500 shadow-2xl relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 p-4 opacity-10 text-8xl font-black">AI</div>
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <span className="relative flex h-3 w-3">
+                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                          <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                                        </span>
+                                        <span className="text-sm font-black text-emerald-400 uppercase tracking-widest">Live Coaching</span>
+                                    </div>
+                                    <p className="text-4xl font-black text-white leading-snug break-keep">
+                                        {serverStatus.ai_response}
+                                    </p>
+                                </div>
+
+                                {/* 카메라 피드 */}
+                                <div className="flex-1 glass rounded-[3rem] overflow-hidden relative border-4 border-slate-800 shadow-inner group">
+                                    {serverStatus.has_frame ? (
+                                        <img src="/stream" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt="Live Feed" />
+                                    ) : (
+                                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950/50">
+                                            <div className="text-8xl mb-6 animate-bounce">📱</div>
+                                            <p className="text-2xl font-black text-slate-500 mb-2">카메라 연결 대기 중</p>
+                                            <p className="text-slate-600 bg-slate-900 px-6 py-2 rounded-full font-mono">
+                                                {window.location.host}/mobile
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>

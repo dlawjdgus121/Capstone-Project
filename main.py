@@ -1,70 +1,162 @@
-import io, os, re, json, time, base64, asyncio, tempfile, httpx, uvicorn
+import os
+import asyncio
+import uvicorn
+import json
+import base64
+import httpx
+import time
 from typing import List
-from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# 정적 파일 설정
-if os.path.exists("assets"):
-    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+# API 설정 (지침에 따라 키는 빈 문자열로 설정, 실행 환경에서 주입됨)
+API_KEY = ""
+MODEL_NAME = "gemini-3-flash-preview"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
-BASE_TEMP_DIR = os.path.join(tempfile.gettempdir(), "ai_manual_system")
-os.makedirs(BASE_TEMP_DIR, exist_ok=True)
-app.mount("/outputs", StaticFiles(directory=BASE_TEMP_DIR), name="outputs")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 시스템 전역 상태
+# 전역 상태 관리
 state = {
     "latest_frame": None,
-    "is_vlm_active": False,
     "manual_steps": [],
     "current_step_idx": 0,
-    "last_ai_response": "카메라 연결 대기 중...",
+    "ai_feedback": "매뉴얼을 업로드하면 코칭이 시작됩니다.",
+    "is_analyzed": False,
+    "is_coaching_active": False,
+    "last_analysis_time": 0
 }
 
-# --- 경로 설정 ---
+# --- Gemini API 호출 유틸리티 (지수 백오프 적용) ---
+async def call_gemini(payload: dict):
+    retries = 5
+    for i in range(retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(GEMINI_URL, json=payload, timeout=30.0)
+                if response.status_code == 200:
+                    return response.json()
+        except Exception:
+            pass
+        await asyncio.sleep(2 ** i) # 1s, 2s, 4s, 8s, 16s
+    return None
 
-@app.get("/")
-async def serve_pc():
-    """PC용 대시보드 (index.html)"""
-    return FileResponse("index.html")
+# --- 실시간 코칭 루프 (백그라운드) ---
+async def coaching_loop():
+    while True:
+        if state["is_coaching_active"] and state["latest_frame"] and state["manual_steps"]:
+            # 3초마다 한 번씩 AI 분석 (비용 및 부하 절감)
+            current_time = time.time()
+            if current_time - state["last_analysis_time"] > 3.0:
+                state["last_analysis_time"] = current_time
+                
+                current_step = state["manual_steps"][state["current_step_idx"]]
+                frame_b64 = base64.b64encode(state["latest_frame"]).decode('utf-8')
 
-@app.get("/mobile")
-async def serve_mobile():
-    """모바일용 카메라 (index.html - 프론트엔드에서 경로 분기 처리)"""
-    return FileResponse("index.html")
+                prompt = f"""
+                You are a professional assembly coach. 
+                Current Goal: {current_step['title']} - {current_step['desc']}
+                Look at the user's live camera feed and provide feedback in Korean.
+                If the user completed the step, set 'completed' to true.
+                Respond ONLY in JSON format: {{"feedback": "string", "completed": boolean}}
+                """
 
-# --- 통신 엔드포인트 ---
+                payload = {
+                    "contents": [{
+                        "parts": [
+                            {"text": prompt},
+                            {"inlineData": {"mimeType": "image/jpeg", "data": frame_b64}}
+                        ]
+                    }],
+                    "generationConfig": {
+                        "responseMimeType": "application/json"
+                    }
+                }
 
-@app.get("/status")
-async def get_status():
-    return {
-        "current_idx": state["current_step_idx"],
-        "ai_response": state["last_ai_response"],
-        "is_active": state["is_vlm_active"],
-        "has_frame": state["latest_frame"] is not None
-    }
+                result = await call_gemini(payload)
+                if result:
+                    try:
+                        text = result['candidates'][0]['content']['parts'][0]['text']
+                        res_json = json.loads(text)
+                        state["ai_feedback"] = res_json.get("feedback", "")
+                        if res_json.get("completed") and state["current_step_idx"] < len(state["manual_steps"]) - 1:
+                            state["current_step_idx"] += 1
+                            state["ai_feedback"] = f"축하합니다! 다음 단계로 넘어갑니다: {state['manual_steps'][state['current_step_idx']]['title']}"
+                    except:
+                        pass
+        await asyncio.sleep(0.5)
 
-@app.post("/vlm/toggle")
-async def vlm_toggle(active: bool):
-    state["is_vlm_active"] = active
-    return {"status": "ok"}
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(coaching_loop())
+
+# --- API 엔드포인트 ---
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("🟢 [LOG] 모바일 카메라 장치 연결됨")
     try:
         while True:
             data = await websocket.receive_bytes()
             state["latest_frame"] = data
+            state["is_coaching_active"] = True
     except WebSocketDisconnect:
-        print("🔴 [LOG] 모바일 카메라 연결 끊김")
         state["latest_frame"] = None
+        state["is_coaching_active"] = False
+
+@app.post("/process-manual")
+async def process_manual(files: List[UploadFile] = File(...)):
+    image_parts = []
+    for file in files:
+        content = await file.read()
+        image_parts.append({
+            "inlineData": {
+                "mimeType": "image/jpeg",
+                "data": base64.b64encode(content).decode('utf-8')
+            }
+        })
+
+    prompt = """
+    Analyze these assembly manual images. 
+    Extract a logical sequence of steps for the user to follow.
+    Respond ONLY in JSON format: {"steps": [{"title": "string", "desc": "string"}]}
+    The response must be in Korean.
+    """
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}] + image_parts}],
+        "generationConfig": {"responseMimeType": "application/json"}
+    }
+
+    result = await call_gemini(payload)
+    if result:
+        try:
+            text = result['candidates'][0]['content']['parts'][0]['text']
+            data = json.loads(text)
+            state["manual_steps"] = data.get("steps", [])
+            state["is_analyzed"] = True
+            state["current_step_idx"] = 0
+            state["ai_feedback"] = "분석 완료! 조립을 시작하세요."
+            return {"status": "success", "steps": state["manual_steps"]}
+        except:
+            return {"status": "error", "message": "JSON 파싱 실패"}
+    
+    return {"status": "error", "message": "AI 응답 실패"}
+
+@app.get("/status")
+async def get_status():
+    return {
+        "ai_response": state["ai_feedback"],
+        "has_frame": state["latest_frame"] is not None,
+        "steps": state["manual_steps"],
+        "current_idx": state["current_step_idx"],
+        "is_analyzed": state["is_analyzed"]
+    }
 
 @app.get("/stream")
 async def stream():
@@ -73,30 +165,16 @@ async def stream():
             frame = state["latest_frame"]
             if frame:
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
-            await asyncio.sleep(0.04)
+            await asyncio.sleep(0.06)
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
-@app.post("/process-manual")
-async def process_manual(files: List[UploadFile] = File(...)):
-    # 테스트용 데이터 (실제 로직은 Gemini 분석 결과를 리스트로 저장)
-    state["manual_steps"] = [
-        {"display_id": "Step 1", "action": "본체 준비", "expected": "본체가 수평으로 놓임"},
-        {"display_id": "Step 2", "action": "나사 체결", "expected": "나사 4개가 모두 박힘"}
-    ]
-    state["current_step_idx"] = 0
-    return {"status": "success", "steps": state["manual_steps"]}
+@app.get("/")
+@app.get("/mobile")
+async def serve_index():
+    return FileResponse(os.path.join(BASE_DIR, "index.html"))
 
-# VLM 분석 워커 (가상 로직)
-async def vlm_worker():
-    while True:
-        if state["is_vlm_active"] and state["latest_frame"]:
-            # 여기서 실제 GPU VLM 서버와 통신하여 결과를 state["last_ai_response"]에 저장
-            pass
-        await asyncio.sleep(2.0)
-
-@app.on_event("startup")
-async def startup():
-    asyncio.create_task(vlm_worker())
+if os.path.exists(os.path.join(BASE_DIR, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(BASE_DIR, "assets")), name="assets")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
