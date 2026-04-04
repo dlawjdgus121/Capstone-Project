@@ -1,180 +1,176 @@
-import os
-import asyncio
-import uvicorn
-import json
-import base64
-import httpx
-import time
+import io, os, re, json, time, base64, asyncio, tempfile, httpx, uvicorn
 from typing import List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
+
+# PDF 지원 체크
+try:
+    from pdf2image import convert_from_bytes
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# API 설정 (지침에 따라 키는 빈 문자열로 설정, 실행 환경에서 주입됨)
-API_KEY = ""
+# API 설정
+const_apiKey = "AIzaSyDsmBSyzPy5LDo6giK-txolXeS-i0VvsZs"
 MODEL_NAME = "gemini-3-flash-preview"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={const_apiKey}"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 
 # 전역 상태 관리
 state = {
     "latest_frame": None,
     "manual_steps": [],
     "current_step_idx": 0,
-    "ai_feedback": "매뉴얼을 업로드하면 코칭이 시작됩니다.",
+    "ai_feedback": "시스템 준비 완료. 매뉴얼을 업로드하세요.",
     "is_analyzed": False,
     "is_coaching_active": False,
-    "last_analysis_time": 0
+    "processing_tasks": 0,
+    "analysis_time": 0.0
 }
 
-# --- Gemini API 호출 유틸리티 (지수 백오프 적용) ---
-async def call_gemini(payload: dict):
-    retries = 5
-    for i in range(retries):
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(GEMINI_URL, json=payload, timeout=30.0)
-                if response.status_code == 200:
-                    return response.json()
-        except Exception:
-            pass
-        await asyncio.sleep(2 ** i) # 1s, 2s, 4s, 8s, 16s
+MAX_CONCURRENT_TASKS = 2
+
+# --- Gemini API 호출 유틸리티 ---
+async def call_gemini(prompt, pil_image=None):
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    if pil_image:
+        buffered = io.BytesIO()
+        pil_image.save(buffered, format="JPEG")
+        img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        payload["contents"][0]["parts"].append({"inlineData": {"mimeType": "image/jpeg", "data": img_b64}})
+    
+    payload["generationConfig"] = {"responseMimeType": "application/json"}
+
+    async with httpx.AsyncClient() as client:
+        for i in range(3):
+            try:
+                res = await client.post(GEMINI_URL, json=payload, timeout=40.0)
+                if res.status_code == 200:
+                    return res.json()
+            except: pass
+            await asyncio.sleep(1)
     return None
 
-# --- 실시간 코칭 루프 (백그라운드) ---
-async def coaching_loop():
+# --- 병렬 코칭 루프 ---
+async def run_parallel_analysis(frame_data, steps, current_idx):
+    state["processing_tasks"] += 1
+    try:
+        current_step = steps[current_idx]
+        prompt = f"""너는 조립 전문가야. 현재 단계: {current_step['title']} ({current_step['desc']}). 
+        카메라를 보고 피드백을 한국어로 짧게 줘. 완료했다면 'is_completed'를 true로 해.
+        JSON 응답: {{"feedback": "메시지", "is_completed": bool}}"""
+        
+        pil_frame = Image.open(io.BytesIO(frame_data))
+        result = await call_gemini(prompt, pil_frame)
+        if result:
+            data = json.loads(result['candidates'][0]['content']['parts'][0]['text'])
+            state["ai_feedback"] = data.get("feedback", state["ai_feedback"])
+            if data.get("is_completed") and state["current_step_idx"] < len(steps)-1:
+                state["current_step_idx"] += 1
+    except: pass
+    finally:
+        state["processing_tasks"] -= 1
+
+async def coaching_manager():
     while True:
         if state["is_coaching_active"] and state["latest_frame"] and state["manual_steps"]:
-            # 3초마다 한 번씩 AI 분석 (비용 및 부하 절감)
-            current_time = time.time()
-            if current_time - state["last_analysis_time"] > 3.0:
-                state["last_analysis_time"] = current_time
+            if state["processing_tasks"] < MAX_CONCURRENT_TASKS:
+                asyncio.create_task(run_parallel_analysis(state["latest_frame"], state["manual_steps"], state["current_step_idx"]))
+        await asyncio.sleep(1.5)
+
+# --- 매뉴얼 크롭 로직 통합 ---
+async def process_manual_logic(files: List[UploadFile]):
+    start_time = time.time()
+    session_id = f"sess_{int(start_time)}"
+    sess_dir = os.path.join(OUTPUT_DIR, session_id)
+    os.makedirs(sess_dir, exist_ok=True)
+    
+    all_steps = []
+    for f_idx, file in enumerate(files):
+        content = await file.read()
+        imgs = convert_from_bytes(content, dpi=150) if file.filename.lower().endswith(".pdf") and PDF_SUPPORT else [Image.open(io.BytesIO(content)).convert("RGB")]
+        
+        for p_idx, img in enumerate(imgs):
+            box_prompt = "Identify assembly steps. Return JSON: {'1': [ymin, xmin, ymax, xmax], ...} (0-1000)"
+            box_res = await call_gemini(box_prompt, img)
+            if not box_res: continue
+            
+            boxes = json.loads(box_res['candidates'][0]['content']['parts'][0]['text'])
+            w, h = img.size
+            for sid in sorted(boxes.keys(), key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 999):
+                ymin, xmin, ymax, xmax = boxes[sid]
+                crop = img.crop(((xmin*w)/1000, (ymin*h)/1000, (xmax*w)/1000, (ymax*h)/1000))
+                fname = f"f{f_idx}_p{p_idx}_s{sid}.jpg"
+                crop.save(os.path.join(sess_dir, fname), "JPEG", quality=85)
                 
-                current_step = state["manual_steps"][state["current_step_idx"]]
-                frame_b64 = base64.b64encode(state["latest_frame"]).decode('utf-8')
-
-                prompt = f"""
-                You are a professional assembly coach. 
-                Current Goal: {current_step['title']} - {current_step['desc']}
-                Look at the user's live camera feed and provide feedback in Korean.
-                If the user completed the step, set 'completed' to true.
-                Respond ONLY in JSON format: {{"feedback": "string", "completed": boolean}}
-                """
-
-                payload = {
-                    "contents": [{
-                        "parts": [
-                            {"text": prompt},
-                            {"inlineData": {"mimeType": "image/jpeg", "data": frame_b64}}
-                        ]
-                    }],
-                    "generationConfig": {
-                        "responseMimeType": "application/json"
-                    }
-                }
-
-                result = await call_gemini(payload)
-                if result:
-                    try:
-                        text = result['candidates'][0]['content']['parts'][0]['text']
-                        res_json = json.loads(text)
-                        state["ai_feedback"] = res_json.get("feedback", "")
-                        if res_json.get("completed") and state["current_step_idx"] < len(state["manual_steps"]) - 1:
-                            state["current_step_idx"] += 1
-                            state["ai_feedback"] = f"축하합니다! 다음 단계로 넘어갑니다: {state['manual_steps'][state['current_step_idx']]['title']}"
-                    except:
-                        pass
-        await asyncio.sleep(0.5)
+                detail_prompt = "이 단계 분석해서 JSON: {'title': '제목', 'desc': '설명'}"
+                detail_res = await call_gemini(detail_prompt, crop)
+                if detail_res:
+                    detail = json.loads(detail_res['candidates'][0]['content']['parts'][0]['text'])
+                    all_steps.append({
+                        "title": detail.get("title", f"Step {sid}"),
+                        "desc": detail.get("desc", ""),
+                        "image_url": f"/outputs/{session_id}/{fname}"
+                    })
+    
+    state["manual_steps"] = all_steps
+    state["is_analyzed"] = True
+    state["analysis_time"] = round(time.time() - start_time, 2)
+    print(f"✅ 분석 완료: {state['analysis_time']}초")
+    return all_steps
 
 @app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(coaching_loop())
-
-# --- API 엔드포인트 ---
+async def startup(): asyncio.create_task(coaching_manager())
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    state["is_coaching_active"] = True
     try:
         while True:
-            data = await websocket.receive_bytes()
-            state["latest_frame"] = data
-            state["is_coaching_active"] = True
-    except WebSocketDisconnect:
-        state["latest_frame"] = None
-        state["is_coaching_active"] = False
+            state["latest_frame"] = await websocket.receive_bytes()
+    except WebSocketDisconnect: state["is_coaching_active"] = False
 
 @app.post("/process-manual")
-async def process_manual(files: List[UploadFile] = File(...)):
-    image_parts = []
-    for file in files:
-        content = await file.read()
-        image_parts.append({
-            "inlineData": {
-                "mimeType": "image/jpeg",
-                "data": base64.b64encode(content).decode('utf-8')
-            }
-        })
-
-    prompt = """
-    Analyze these assembly manual images. 
-    Extract a logical sequence of steps for the user to follow.
-    Respond ONLY in JSON format: {"steps": [{"title": "string", "desc": "string"}]}
-    The response must be in Korean.
-    """
-
-    payload = {
-        "contents": [{"parts": [{"text": prompt}] + image_parts}],
-        "generationConfig": {"responseMimeType": "application/json"}
-    }
-
-    result = await call_gemini(payload)
-    if result:
-        try:
-            text = result['candidates'][0]['content']['parts'][0]['text']
-            data = json.loads(text)
-            state["manual_steps"] = data.get("steps", [])
-            state["is_analyzed"] = True
-            state["current_step_idx"] = 0
-            state["ai_feedback"] = "분석 완료! 조립을 시작하세요."
-            return {"status": "success", "steps": state["manual_steps"]}
-        except:
-            return {"status": "error", "message": "JSON 파싱 실패"}
-    
-    return {"status": "error", "message": "AI 응답 실패"}
+async def handle_manual(files: List[UploadFile] = File(...)):
+    steps = await process_manual_logic(files)
+    return {"status": "success", "steps": steps}
 
 @app.get("/status")
 async def get_status():
+    # 프론트엔드와 이름 통일 (steps, current_step_idx, ai_feedback)
     return {
-        "ai_response": state["ai_feedback"],
-        "has_frame": state["latest_frame"] is not None,
+        "ai_feedback": state["ai_feedback"],
         "steps": state["manual_steps"],
-        "current_idx": state["current_step_idx"],
-        "is_analyzed": state["is_analyzed"]
+        "current_step_idx": state["current_step_idx"],
+        "is_analyzed": state["is_analyzed"],
+        "has_frame": state["latest_frame"] is not None,
+        "processing_tasks": state["processing_tasks"],
+        "analysis_time": state["analysis_time"]
     }
 
 @app.get("/stream")
 async def stream():
     async def gen():
         while True:
-            frame = state["latest_frame"]
-            if frame:
-                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+            if state["latest_frame"]:
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + state["latest_frame"] + b"\r\n")
             await asyncio.sleep(0.06)
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.get("/")
 @app.get("/mobile")
-async def serve_index():
-    return FileResponse(os.path.join(BASE_DIR, "index.html"))
-
-if os.path.exists(os.path.join(BASE_DIR, "assets")):
-    app.mount("/assets", StaticFiles(directory=os.path.join(BASE_DIR, "assets")), name="assets")
+async def serve(): return FileResponse(os.path.join(BASE_DIR, "index.html"))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
