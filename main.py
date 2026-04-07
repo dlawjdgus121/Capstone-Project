@@ -17,7 +17,7 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # API 설정
-const_apiKey = ""
+const_apiKey = "AIzaSyCpMR8ftsp1PCS-DJ3ryB2UPsaAI6huTr4"
 MODEL_NAME = "gemini-3-flash-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={const_apiKey}"
 
