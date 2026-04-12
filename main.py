@@ -5,141 +5,133 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from dotenv import load_dotenv
 
-# PDF 지원 체크
+load_dotenv()
+
 try:
-    from pdf2image import convert_from_bytes
-    PDF_SUPPORT = True
+    import opendataloader_pdf
 except ImportError:
-    PDF_SUPPORT = False
+    print("⚠️ 'pip install opendataloader-pdf'가 필요합니다.")
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# API 설정
-const_apiKey = ""
-MODEL_NAME = "gemini-3-flash-preview"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={const_apiKey}"
+API_KEY = os.getenv("GEMINI_API_KEY", "")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-09-2025")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 
-# 전역 상태 관리
 state = {
     "latest_frame": None,
     "manual_steps": [],
     "current_step_idx": 0,
-    "ai_feedback": "시스템 준비 완료. 매뉴얼을 업로드하세요.",
+    "ai_feedback": "시스템 준비 완료.",
     "is_analyzed": False,
-    "is_coaching_active": False,
-    "processing_tasks": 0,
     "analysis_time": 0.0
 }
 
-MAX_CONCURRENT_TASKS = 2
+# --- 유틸리티: 자연어 정렬 (파일명 순서 기초 정렬용) ---
+def natural_sort_key(s):
+    return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
-# --- Gemini API 호출 유틸리티 ---
-async def call_gemini(prompt, pil_image=None):
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    if pil_image:
-        buffered = io.BytesIO()
-        pil_image.save(buffered, format="JPEG")
-        img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        payload["contents"][0]["parts"].append({"inlineData": {"mimeType": "image/jpeg", "data": img_b64}})
-    
-    payload["generationConfig"] = {"responseMimeType": "application/json"}
+# --- AI 지능형 이미지 분석 및 순서 판별 ---
+async def analyze_step_from_image(client, img_path):
+    try:
+        img = Image.open(img_path).convert("RGB")
+        img.thumbnail((1024, 1024))
+        
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
-    async with httpx.AsyncClient() as client:
-        for i in range(3):
-            try:
-                res = await client.post(GEMINI_URL, json=payload, timeout=40.0)
-                if res.status_code == 200:
-                    return res.json()
-            except: pass
-            await asyncio.sleep(1)
+        # [AI 미션] 이미지 속 숫자를 읽어 순서를 결정하고 설명을 작성
+        prompt = """
+        당신은 매뉴얼 시각 분석 전문가입니다. 전송된 이미지를 보고 조립 단계를 추출하세요.
+
+        [수행 작업]
+        1. 이미지 내 텍스트 판독: 이미지 안에 'Step 1', '①', '1.' 처럼 단계를 나타내는 숫자가 있는지 확인하세요.
+        2. 유효성 검사: 실제 조립 동작이 포함된 그림인가요? 로고나 빈 페이지라면 'is_valid': false로 답하세요.
+        3. 순서 결정: 이미지 속 숫자 정보를 바탕으로 'step_number'를 숫자로 입력하세요. (예: Step 1 -> 1)
+        4. 내용 요약: 그림에 나타난 조립 동작과 지시사항 텍스트를 분석하여 제목과 설명을 한국어로 작성하세요.
+
+        반드시 JSON으로 응답하세요:
+        {
+          "is_valid": bool,
+          "step_number": int,
+          "title": "동작 제목",
+          "desc": "상세 조립 가이드"
+        }
+        """
+        
+        payload = {
+            "contents": [{"parts": [
+                {"text": prompt},
+                {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}
+            ]}],
+            "generationConfig": {"responseMimeType": "application/json"}
+        }
+
+        res = await client.post(GEMINI_URL, json=payload, timeout=40.0)
+        if res.status_code == 200:
+            data = json.loads(res.json()['candidates'][0]['content']['parts'][0]['text'])
+            if data.get("is_valid") is True:
+                rel_path = os.path.relpath(img_path, OUTPUT_DIR)
+                return {
+                    "step_number": data.get("step_number", 999), # 숫자가 없으면 뒤로 보냄
+                    "title": data.get("title", "조립 단계"),
+                    "desc": data.get("desc", ""),
+                    "image_url": f"/outputs/{rel_path}"
+                }
+    except: pass
     return None
 
-# --- 병렬 코칭 루프 ---
-async def run_parallel_analysis(frame_data, steps, current_idx):
-    state["processing_tasks"] += 1
-    try:
-        current_step = steps[current_idx]
-        prompt = f"""너는 조립 전문가야. 현재 단계: {current_step['title']} ({current_step['desc']}). 
-        카메라를 보고 피드백을 한국어로 짧게 줘. 완료했다면 'is_completed'를 true로 해.
-        JSON 응답: {{"feedback": "메시지", "is_completed": bool}}"""
-        
-        pil_frame = Image.open(io.BytesIO(frame_data))
-        result = await call_gemini(prompt, pil_frame)
-        if result:
-            data = json.loads(result['candidates'][0]['content']['parts'][0]['text'])
-            state["ai_feedback"] = data.get("feedback", state["ai_feedback"])
-            if data.get("is_completed") and state["current_step_idx"] < len(steps)-1:
-                state["current_step_idx"] += 1
-    except: pass
-    finally:
-        state["processing_tasks"] -= 1
-
-async def coaching_manager():
-    while True:
-        if state["is_coaching_active"] and state["latest_frame"] and state["manual_steps"]:
-            if state["processing_tasks"] < MAX_CONCURRENT_TASKS:
-                asyncio.create_task(run_parallel_analysis(state["latest_frame"], state["manual_steps"], state["current_step_idx"]))
-        await asyncio.sleep(1.5)
-
-# --- 매뉴얼 크롭 로직 통합 ---
 async def process_manual_logic(files: List[UploadFile]):
     start_time = time.time()
-    session_id = f"sess_{int(start_time)}"
-    sess_dir = os.path.join(OUTPUT_DIR, session_id)
-    os.makedirs(sess_dir, exist_ok=True)
+    state["manual_steps"] = []
+    state["is_analyzed"] = False
     
-    all_steps = []
-    for f_idx, file in enumerate(files):
-        content = await file.read()
-        imgs = convert_from_bytes(content, dpi=150) if file.filename.lower().endswith(".pdf") and PDF_SUPPORT else [Image.open(io.BytesIO(content)).convert("RGB")]
-        
-        for p_idx, img in enumerate(imgs):
-            box_prompt = "Identify assembly steps. Return JSON: {'1': [ymin, xmin, ymax, xmax], ...} (0-1000)"
-            box_res = await call_gemini(box_prompt, img)
-            if not box_res: continue
-            
-            boxes = json.loads(box_res['candidates'][0]['content']['parts'][0]['text'])
-            w, h = img.size
-            for sid in sorted(boxes.keys(), key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 999):
-                ymin, xmin, ymax, xmax = boxes[sid]
-                crop = img.crop(((xmin*w)/1000, (ymin*h)/1000, (xmax*w)/1000, (ymax*h)/1000))
-                fname = f"f{f_idx}_p{p_idx}_s{sid}.jpg"
-                crop.save(os.path.join(sess_dir, fname), "JPEG", quality=85)
-                
-                detail_prompt = "이 단계 분석해서 JSON: {'title': '제목', 'desc': '설명'}"
-                detail_res = await call_gemini(detail_prompt, crop)
-                if detail_res:
-                    detail = json.loads(detail_res['candidates'][0]['content']['parts'][0]['text'])
-                    all_steps.append({
-                        "title": detail.get("title", f"Step {sid}"),
-                        "desc": detail.get("desc", ""),
-                        "image_url": f"/outputs/{session_id}/{fname}"
-                    })
+    sess_id = f"sess_{int(start_time)}"
+    sess_dir = os.path.join(OUTPUT_DIR, sess_id)
+    raw_dir = os.path.join(sess_dir, "raw"); proc_dir = os.path.join(sess_dir, "processed")
+    os.makedirs(raw_dir, exist_ok=True); os.makedirs(proc_dir, exist_ok=True)
     
-    state["manual_steps"] = all_steps
+    paths = []
+    for f in files:
+        p = os.path.join(raw_dir, f.filename)
+        with open(p, "wb") as b: b.write(await f.read())
+        paths.append(p)
+
+    # 1. 오픈로더 전처리 (이미지 조각 추출)
+    print("🚀 [Loader] 이미지 조각 추출 중...")
+    opendataloader_pdf.convert(input_path=paths, output_dir=proc_dir, format="json")
+
+    img_files = []
+    for root, _, fnames in os.walk(proc_dir):
+        for fn in fnames:
+            if fn.lower().endswith((".png", ".jpg", ".jpeg")):
+                img_files.append(os.path.join(root, fn))
+    
+    # 2. 제미나이 병렬 분석 (이미지 내 숫자로 순서 찾기)
+    print(f"🧠 [AI] {len(img_files)}개 조각 분석 및 이미지 기반 순서 정렬 시작...")
+    async with httpx.AsyncClient() as client:
+        tasks = [analyze_step_from_image(client, path) for path in img_files]
+        results = await asyncio.gather(*tasks)
+
+    # 3. 유효한 단계만 필터링 및 AI가 판별한 step_number 기준으로 최종 정렬
+    valid_steps = [r for r in results if r is not None]
+    # step_number 기준으로 정렬 (이미지 속에 써있는 숫자 순서대로)
+    valid_steps.sort(key=lambda x: x['step_number'])
+
+    state["manual_steps"] = valid_steps
     state["is_analyzed"] = True
     state["analysis_time"] = round(time.time() - start_time, 2)
-    print(f"✅ 분석 완료: {state['analysis_time']}초")
-    return all_steps
-
-@app.on_event("startup")
-async def startup(): asyncio.create_task(coaching_manager())
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    state["is_coaching_active"] = True
-    try:
-        while True:
-            state["latest_frame"] = await websocket.receive_bytes()
-    except WebSocketDisconnect: state["is_coaching_active"] = False
+    print(f"✅ 분석 완료! 총 {len(valid_steps)}개 단계가 이미지 내 번호 순으로 정렬되었습니다.")
+    return valid_steps
 
 @app.post("/process-manual")
 async def handle_manual(files: List[UploadFile] = File(...)):
@@ -148,16 +140,23 @@ async def handle_manual(files: List[UploadFile] = File(...)):
 
 @app.get("/status")
 async def get_status():
-    # 프론트엔드와 이름 통일 (steps, current_step_idx, ai_feedback)
     return {
-        "ai_feedback": state["ai_feedback"],
+        "current_idx": state["current_step_idx"],
+        "ai_response": state.get("last_ai_feedback", "대기 중..."),
         "steps": state["manual_steps"],
-        "current_step_idx": state["current_step_idx"],
         "is_analyzed": state["is_analyzed"],
-        "has_frame": state["latest_frame"] is not None,
-        "processing_tasks": state["processing_tasks"],
-        "analysis_time": state["analysis_time"]
+        "analysis_time": state["analysis_time"],
+        "has_frame": state["latest_frame"] is not None
     }
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            state["latest_frame"] = await websocket.receive_bytes()
+    except WebSocketDisconnect:
+        state["latest_frame"] = None
 
 @app.get("/stream")
 async def stream():
@@ -169,8 +168,7 @@ async def stream():
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.get("/")
-@app.get("/mobile")
-async def serve(): return FileResponse(os.path.join(BASE_DIR, "index.html"))
+async def serve(): return FileResponse("index.html")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -3,17 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Assembly Coach - Final Crop</title>
+    <title>AI Assembly Coach - Interactive Navigator</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background-color: #020617; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; }
-        .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
-        .active-step { background: linear-gradient(135deg, #1d4ed8, #2563eb); transform: scale(1.02); box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.5); }
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        body { background-color: #020617; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; color: white; }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.08); }
+        .active-user-step { 
+            background: linear-gradient(135deg, #2563eb, #1d4ed8); 
+            transform: scale(1.03); 
+            box-shadow: 0 20px 25px -5px rgba(37, 99, 235, 0.4);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .ai-focus-ring { border: 2px solid #10b981 !important; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+        .clickable { cursor: pointer; pointer-events: auto !important; }
+        .step-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; z-index: 10; }
     </style>
 </head>
 <body>
@@ -21,7 +29,6 @@
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        const MAX_CONCURRENT_TASKS = 2; 
 
         function App() {
             const isMobile = window.location.pathname.includes('mobile');
@@ -55,10 +62,10 @@
                                     if(wsRef.current?.readyState === 1) wsRef.current.send(b);
                                 }, 'image/jpeg', 0.4);
                             }
-                            setTimeout(send, 200);
+                            setTimeout(send, 150);
                         };
                         send();
-                    } catch (e) { alert("카메라 권한을 확인하세요."); }
+                    } catch (e) { alert("카메라를 켤 수 없습니다."); }
                 };
                 init();
             }, []);
@@ -68,7 +75,7 @@
                     <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
                     <canvas ref={canvasRef} style={{ display: 'none' }} width="640" height="480" />
                     <div className={`absolute bottom-12 px-8 py-4 rounded-full font-black text-white shadow-2xl ${connected ? 'bg-blue-600 animate-pulse' : 'bg-red-600'}`}>
-                        {connected ? "LIVE COACHING ACTIVE" : "CONNECTING..."}
+                        {connected ? "● LIVE STREAMING" : "CONNECTING..."}
                     </div>
                 </div>
             );
@@ -76,24 +83,25 @@
 
         function PCView() {
             const [view, setView] = useState('landing');
-            const [status, setStatus] = useState({ ai_feedback: '연결 중...', steps: [], current_step_idx: 0, has_frame: false, processing_tasks: 0, analysis_time: 0 });
+            const [status, setStatus] = useState({ ai_response: '대기 중...', steps: [], current_step_idx: 0, has_frame: false, analysis_time: 0 });
             const [uploading, setUploading] = useState(false);
+            const [userSelectedIdx, setUserSelectedIdx] = useState(null); 
             const inputRef = useRef(null);
 
+            // 상태 폴링
             useEffect(() => {
                 const timer = setInterval(async () => {
                     try {
                         const res = await fetch('/status');
                         const data = await res.json();
-                        // 데이터 안전하게 업데이트
-                        setStatus(prev => ({
-                            ...prev,
-                            ...data,
-                            steps: data.steps || []
-                        }));
-                        if (data.is_analyzed && view === 'upload') setView('coach');
+                        setStatus(prev => ({ ...prev, ...data }));
+                        
+                        // 분석 중이거나 단계가 하나라도 있으면 즉시 대시보드로 이동
+                        if ((data.steps?.length > 0) && view === 'upload') {
+                            setView('coach');
+                        }
                     } catch (e) {}
-                }, 1000);
+                }, 800);
                 return () => clearInterval(timer);
             }, [view]);
 
@@ -103,97 +111,150 @@
                 setUploading(true);
                 const fd = new FormData();
                 for (let f of files) fd.append('files', f);
-                try {
-                    await fetch('/process-manual', { method: 'POST', body: fd });
-                } catch(e) {
-                    alert("업로드 실패");
-                    setUploading(false);
-                }
+                await fetch('/process-manual', { method: 'POST', body: fd });
             };
 
-            // 에러 방지: steps가 없을 경우 대비
-            const currentStep = (status.steps && status.steps.length > 0) ? status.steps[status.current_step_idx] : null;
+            // 사용자가 선택한 단계가 있으면 그것을 보여주고, 아니면 AI 추천 단계 표시
+            const activeIdx = userSelectedIdx !== null ? userSelectedIdx : (status.steps?.length > 0 ? status.current_step_idx : 0);
+            const currentStep = (status.steps && status.steps.length > 0) ? status.steps[activeIdx] : null;
+
+            const handleStepClick = (idx) => {
+                console.log("Step Clicked:", idx);
+                setUserSelectedIdx(idx);
+            };
 
             return (
-                <div className="min-h-screen text-white p-8 flex flex-col items-center justify-center">
+                <div className="min-h-screen text-white p-8 flex flex-col items-center justify-center font-sans">
                     {view === 'landing' && (
                         <div className="text-center">
-                            <h1 className="text-8xl font-black mb-8 italic tracking-tighter bg-gradient-to-br from-blue-400 to-white bg-clip-text text-transparent">
-                                CROP AI COACH
+                            <h1 className="text-8xl font-black mb-8 italic tracking-tighter bg-gradient-to-br from-blue-400 via-white to-blue-500 bg-clip-text text-transparent uppercase">
+                                Assembly Coach
                             </h1>
-                            <button onClick={() => setView('upload')} className="bg-blue-600 text-white px-16 py-6 rounded-2xl font-black text-2xl hover:scale-105 transition-all shadow-2xl">
-                                시작하기
+                            <button onClick={() => setView('upload')} className="bg-blue-600 text-white px-16 py-6 rounded-3xl font-black text-2xl hover:scale-105 transition-all shadow-2xl shadow-blue-500/20 active:scale-95">
+                                START ANALYSIS
                             </button>
                         </div>
                     )}
 
                     {view === 'upload' && (
-                        <div className="w-full max-w-xl glass p-12 rounded-[3rem] text-center border border-white/10">
-                            <h2 className="text-4xl font-black mb-8">매뉴얼 정밀 분석</h2>
-                            <div onClick={() => inputRef.current.click()} className="border-4 border-dashed border-slate-800 rounded-[2rem] p-20 cursor-pointer hover:bg-slate-900 transition-colors">
-                                {uploading ? <p className="text-blue-500 font-bold animate-bounce text-xl">단계별 크롭 및 분석 중...</p> : <p className="text-slate-500 text-xl font-bold italic">설명서 파일 선택</p>}
+                        <div className="w-full max-w-xl glass p-12 rounded-[3.5rem] text-center">
+                            <h2 className="text-4xl font-black mb-8 text-blue-400">매뉴얼 업로드</h2>
+                            <div onClick={() => inputRef.current.click()} className="border-4 border-dashed border-slate-800 rounded-[2.5rem] p-20 cursor-pointer hover:bg-slate-900/50 transition-colors group">
+                                {uploading ? (
+                                    <div className="flex flex-col items-center gap-4">
+                                        <div className="w-14 h-14 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                        <p className="text-blue-500 font-black text-xl">AI가 조립 단계를 매칭 중입니다...</p>
+                                    </div>
+                                ) : (
+                                    <p className="text-slate-500 text-xl font-bold italic group-hover:text-slate-300">PDF 또는 이미지 파일을 드래그하세요</p>
+                                )}
                             </div>
                             <input type="file" multiple ref={inputRef} onChange={onUpload} className="hidden" />
                         </div>
                     )}
 
                     {view === 'coach' && (
-                        <div className="w-full max-w-[1750px] flex gap-8 h-[88vh]">
-                            <div className="w-1/4 glass rounded-[3rem] p-8 flex flex-col border border-white/5 shadow-2xl">
-                                <div className="flex justify-between items-center mb-8 px-2">
-                                    <h2 className="text-3xl font-black italic text-blue-400">GUIDE</h2>
-                                    <span className="text-sm font-mono text-emerald-400">{status.analysis_time}s</span>
+                        <div className="w-full max-w-[1800px] flex gap-10 h-[90vh]">
+                            {/* 왼쪽: 단계 목록 (클릭 가능하도록 강화) */}
+                            <div className="w-1/4 glass rounded-[3.5rem] p-8 flex flex-col shadow-2xl overflow-hidden">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-3xl font-black italic text-blue-400 uppercase tracking-tighter">Guide</h2>
+                                    <span className="bg-slate-900 px-3 py-1 rounded-full text-[10px] font-mono text-emerald-400 border border-emerald-500/20">{status.analysis_time}s</span>
                                 </div>
-                                <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
-                                    {status.steps?.map((s, i) => (
-                                        <div key={i} className={`p-6 rounded-3xl transition-all duration-500 ${i === status.current_step_idx ? 'active-step' : 'bg-slate-900/50 opacity-20'}`}>
-                                            <p className="text-xs font-black mb-1 opacity-70">STEP {i + 1}</p>
-                                            <p className="text-lg font-bold leading-tight">{s.title}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                                
+                                {userSelectedIdx !== null && (
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); setUserSelectedIdx(null); }}
+                                        className="mb-6 py-3 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-2xl text-[11px] font-black hover:bg-emerald-500/20 transition-all uppercase tracking-widest active:scale-95"
+                                    >
+                                        ✨ RETURN TO AI FOLLOW MODE
+                                    </button>
+                                )}
 
-                            <div className="flex-1 flex flex-col gap-6">
-                                <div className="glass rounded-[3rem] p-8 relative overflow-hidden border-l-[12px] border-emerald-500 shadow-2xl">
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <div className="flex gap-1">
-                                            {[...Array(MAX_CONCURRENT_TASKS)].map((_, i) => (
-                                                <div key={i} className={`w-2 h-2 rounded-full ${i < (status.processing_tasks || 0) ? 'bg-blue-500 animate-pulse' : 'bg-slate-800'}`}></div>
-                                            ))}
+                                <div className="flex-1 space-y-5 overflow-y-auto pr-3 custom-scrollbar">
+                                    {status.steps?.length > 0 ? status.steps.map((s, i) => (
+                                        <div 
+                                            key={i} 
+                                            onClick={() => handleStepClick(i)}
+                                            className={`p-6 rounded-[2rem] clickable step-card ${
+                                                i === activeIdx ? 'active-user-step' : 'bg-slate-900/40 opacity-50 hover:opacity-100 hover:bg-slate-900/60'
+                                            } ${i === status.current_step_idx ? 'ring-2 ring-emerald-500/60' : ''}`}
+                                        >
+                                            <div className="flex justify-between items-start mb-2">
+                                                <p className="text-[10px] font-black opacity-60 uppercase tracking-widest">Step {i + 1}</p>
+                                                {i === status.current_step_idx && (
+                                                    <span className="text-[9px] bg-emerald-500 text-white px-2 py-0.5 rounded-full animate-pulse font-black shadow-lg">AI NOW</span>
+                                                )}
+                                            </div>
+                                            <p className="text-lg font-bold leading-snug break-keep">{s.title}</p>
                                         </div>
-                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AI Vision Active</span>
-                                    </div>
-                                    <p className="text-4xl font-black leading-tight break-keep">{status.ai_feedback}</p>
-                                </div>
-
-                                <div className="flex-1 glass rounded-[4rem] overflow-hidden relative shadow-2xl bg-black border-4 border-slate-800">
-                                    {status.has_frame ? (
-                                        <img src="/stream" className="w-full h-full object-contain" alt="Live Feed" />
-                                    ) : (
-                                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 bg-slate-950/40">
-                                            <p className="text-2xl font-black mb-4">AWAITING CAMERA</p>
-                                            <p className="font-mono text-sm opacity-50">{window.location.host}/mobile</p>
+                                    )) : (
+                                        <div className="flex flex-col items-center justify-center h-40 opacity-20">
+                                            <p className="font-black italic">ANALYZING...</p>
                                         </div>
                                     )}
                                 </div>
                             </div>
 
-                            <div className="w-1/4 flex flex-col gap-6">
-                                <div className="flex-1 glass rounded-[3rem] p-8 flex flex-col border border-white/5 shadow-2xl overflow-hidden">
-                                    <h2 className="text-2xl font-black mb-6 italic text-blue-400 uppercase tracking-tighter">Manual Focus</h2>
-                                    {currentStep ? (
-                                        <div className="flex-1 flex flex-col gap-6">
-                                            <div className="bg-white rounded-2xl p-2 h-1/2 overflow-hidden shadow-inner border-2 border-slate-700">
-                                                <img src={currentStep.image_url} className="w-full h-full object-contain" alt="Step Manual" />
+                            {/* 중앙: 실시간 피드 및 AI 메시지 */}
+                            <div className="flex-1 flex flex-col gap-8">
+                                <div className="glass rounded-[3rem] p-8 relative overflow-hidden border-l-[16px] border-blue-600 shadow-2xl">
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
+                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Real-time Vision Feedback</span>
+                                    </div>
+                                    <p className="text-4xl font-black leading-tight break-keep text-white/90">
+                                        {status.has_frame ? status.ai_response : "카메라를 연결하면 코칭이 시작됩니다."}
+                                    </p>
+                                </div>
+
+                                <div className="flex-1 glass rounded-[4.5rem] overflow-hidden relative shadow-2xl bg-black/50 border-[6px] border-slate-900/50">
+                                    {status.has_frame ? (
+                                        <img src="/stream" className="w-full h-full object-contain" alt="Live" />
+                                    ) : (
+                                        <div className="w-full h-full flex flex-col items-center justify-center">
+                                            <div className="w-24 h-24 border-8 border-slate-900 border-t-blue-600 rounded-full animate-spin mb-8 shadow-2xl shadow-blue-500/20"></div>
+                                            <p className="text-3xl font-black mb-4 uppercase italic tracking-[0.2em] opacity-20">Awaiting Stream</p>
+                                            <div className="px-8 py-3 bg-blue-600/10 rounded-full border border-blue-500/20">
+                                                <p className="font-mono text-xs text-blue-400 font-bold tracking-wider uppercase">Connect via: {window.location.host}/mobile</p>
                                             </div>
-                                            <div className="p-6 bg-slate-800/50 rounded-2xl border border-white/10">
-                                                <p className="text-blue-400 font-bold mb-2">Detailed Instruction</p>
-                                                <p className="text-slate-300 leading-relaxed text-sm">{currentStep.desc}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* 오른쪽: 매뉴얼 상세 포커스 (선택한 단계 표시) */}
+                            <div className="w-1/4 flex flex-col gap-8">
+                                <div className="flex-1 glass rounded-[3.5rem] p-10 flex flex-col shadow-2xl overflow-hidden text-center">
+                                    <div className="mb-8">
+                                        <h2 className="text-3xl font-black italic text-blue-400 uppercase tracking-tighter">Focus</h2>
+                                        <div className="mt-3 inline-block px-4 py-1.5 bg-blue-600/10 rounded-full border border-blue-500/20">
+                                            <p className="text-[10px] text-blue-400 font-black uppercase tracking-widest">
+                                                {userSelectedIdx !== null ? `Step ${userSelectedIdx + 1} Viewing` : `Following AI Progress`}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {currentStep ? (
+                                        <div className="flex-1 flex flex-col gap-8 overflow-hidden">
+                                            <div className="bg-white rounded-[2.5rem] p-6 h-[48%] flex items-center justify-center shadow-2xl border-4 border-slate-900/30 group">
+                                                <img 
+                                                    src={currentStep.image_url} 
+                                                    className="max-w-full max-h-full object-contain transform group-hover:scale-110 transition-transform duration-700" 
+                                                    alt="Detail" 
+                                                />
+                                            </div>
+                                            <div className="p-8 bg-slate-950/40 rounded-[2.5rem] border border-white/5 text-left overflow-y-auto flex-1 custom-scrollbar shadow-inner">
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <div className="w-1.5 h-4 bg-blue-500 rounded-full shadow-lg shadow-blue-500/50"></div>
+                                                    <p className="text-blue-400 font-black uppercase text-[11px] tracking-[0.15em]">Instructions</p>
+                                                </div>
+                                                <p className="text-slate-200 leading-relaxed text-base font-medium break-keep opacity-90">{currentStep.desc}</p>
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="flex-1 flex items-center justify-center text-slate-600 italic">분석 대기 중...</div>
+                                        <div className="flex-1 flex flex-col items-center justify-center text-slate-800">
+                                            <p className="italic font-black text-2xl uppercase opacity-10">Select Step</p>
+                                        </div>
                                     )}
                                 </div>
                             </div>

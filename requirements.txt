@@ -11,6 +11,8 @@ opencv-python
 numpy
 pdf2image  
 websockets
+python-dotenv
+opendataloader-pdf
 
 
 
