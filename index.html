@@ -22,6 +22,13 @@
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
         .clickable { cursor: pointer; pointer-events: auto !important; }
         .step-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; z-index: 10; }
+        
+        /* 애니메이션 효과 */
+        @keyframes pulse-soft {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .animate-pulse-soft { animation: pulse-soft 2s infinite; }
     </style>
 </head>
 <body>
@@ -31,7 +38,8 @@
         const { useState, useEffect, useRef } = React;
 
         function App() {
-            const isMobile = window.location.pathname.includes('mobile');
+            // URL 파라미터나 경로로 모바일 뷰 판단
+            const isMobile = window.location.pathname.includes('mobile') || window.location.search.includes('view=mobile');
             return isMobile ? <MobileView /> : <PCView />;
         }
 
@@ -45,37 +53,44 @@
                 const init = async () => {
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia({
-                            video: { facingMode: 'environment', width: 640, height: 480 },
+                            video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
                             audio: false
                         });
                         if (videoRef.current) videoRef.current.srcObject = stream;
-                        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+                        
+                        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                        const wsUrl = `${protocol}//${window.location.host}/ws`;
                         wsRef.current = new WebSocket(wsUrl);
+                        
                         wsRef.current.onopen = () => setConnected(true);
                         wsRef.current.onclose = () => setConnected(false);
 
-                        const send = () => {
+                        const sendFrame = () => {
                             if (wsRef.current?.readyState === 1 && videoRef.current?.readyState === 4) {
                                 const ctx = canvasRef.current.getContext('2d');
                                 ctx.drawImage(videoRef.current, 0, 0, 640, 480);
-                                canvasRef.current.toBlob(b => {
-                                    if(wsRef.current?.readyState === 1) wsRef.current.send(b);
-                                }, 'image/jpeg', 0.4);
+                                canvasRef.current.toBlob(blob => {
+                                    if(wsRef.current?.readyState === 1) wsRef.current.send(blob);
+                                }, 'image/jpeg', 0.5);
                             }
-                            setTimeout(send, 150);
+                            setTimeout(sendFrame, 200); // 5fps 정도로 전송
                         };
-                        send();
-                    } catch (e) { alert("카메라를 켤 수 없습니다."); }
+                        sendFrame();
+                    } catch (e) { 
+                        console.error("Camera error:", e);
+                        alert("카메라 권한이 필요합니다."); 
+                    }
                 };
                 init();
+                return () => wsRef.current?.close();
             }, []);
 
             return (
-                <div className="h-screen bg-black flex items-center justify-center relative">
+                <div className="h-screen bg-black flex items-center justify-center relative overflow-hidden">
                     <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
                     <canvas ref={canvasRef} style={{ display: 'none' }} width="640" height="480" />
-                    <div className={`absolute bottom-12 px-8 py-4 rounded-full font-black text-white shadow-2xl ${connected ? 'bg-blue-600 animate-pulse' : 'bg-red-600'}`}>
-                        {connected ? "● LIVE STREAMING" : "CONNECTING..."}
+                    <div className={`absolute bottom-10 left-1/2 -translate-x-1/2 px-8 py-4 rounded-full font-black text-white shadow-2xl transition-all ${connected ? 'bg-blue-600 animate-pulse' : 'bg-red-600'}`}>
+                        {connected ? "● LIVE STREAMING" : "RECONNECTING..."}
                     </div>
                 </div>
             );
@@ -88,174 +103,202 @@
             const [userSelectedIdx, setUserSelectedIdx] = useState(null); 
             const inputRef = useRef(null);
 
-            // 상태 폴링
+            // 상태 폴링 (백엔드와 동기화)
             useEffect(() => {
                 const timer = setInterval(async () => {
                     try {
                         const res = await fetch('/status');
                         const data = await res.json();
-                        setStatus(prev => ({ ...prev, ...data }));
+                        setStatus(data);
                         
-                        // 분석 중이거나 단계가 하나라도 있으면 즉시 대시보드로 이동
-                        if ((data.steps?.length > 0) && view === 'upload') {
+                        // 분석 완료 시 자동으로 코칭 화면으로 전환
+                        if (data.manual_steps?.length > 0 && view === 'upload' && !uploading) {
                             setView('coach');
                         }
                     } catch (e) {}
-                }, 800);
+                }, 1000);
                 return () => clearInterval(timer);
-            }, [view]);
+            }, [view, uploading]);
 
             const onUpload = async (e) => {
                 const files = e.target.files;
                 if (!files.length) return;
+                
                 setUploading(true);
                 const fd = new FormData();
                 for (let f of files) fd.append('files', f);
-                await fetch('/process-manual', { method: 'POST', body: fd });
+                
+                try {
+                    const res = await fetch('/process-manual', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    if (data.status === "success") {
+                        setUploading(false);
+                        setView('coach');
+                    }
+                } catch (e) {
+                    console.error("Upload failed", e);
+                    setUploading(false);
+                }
             };
 
-            // 사용자가 선택한 단계가 있으면 그것을 보여주고, 아니면 AI 추천 단계 표시
-            const activeIdx = userSelectedIdx !== null ? userSelectedIdx : (status.steps?.length > 0 ? status.current_step_idx : 0);
-            const currentStep = (status.steps && status.steps.length > 0) ? status.steps[activeIdx] : null;
-
-            const handleStepClick = (idx) => {
-                console.log("Step Clicked:", idx);
-                setUserSelectedIdx(idx);
-            };
+            const activeIdx = userSelectedIdx !== null ? userSelectedIdx : (status.manual_steps?.length > 0 ? status.current_step_idx : 0);
+            const currentStep = (status.manual_steps && status.manual_steps.length > 0) ? status.manual_steps[activeIdx] : null;
 
             return (
-                <div className="min-h-screen text-white p-8 flex flex-col items-center justify-center font-sans">
+                <div className="min-h-screen bg-[#020617] text-white p-6 flex flex-col items-center justify-center font-sans overflow-hidden">
                     {view === 'landing' && (
-                        <div className="text-center">
-                            <h1 className="text-8xl font-black mb-8 italic tracking-tighter bg-gradient-to-br from-blue-400 via-white to-blue-500 bg-clip-text text-transparent uppercase">
+                        <div className="text-center animate-in fade-in zoom-in duration-700">
+                            <h1 className="text-8xl font-black mb-8 italic tracking-tighter bg-gradient-to-br from-blue-400 via-white to-blue-600 bg-clip-text text-transparent uppercase">
                                 Assembly Coach
                             </h1>
-                            <button onClick={() => setView('upload')} className="bg-blue-600 text-white px-16 py-6 rounded-3xl font-black text-2xl hover:scale-105 transition-all shadow-2xl shadow-blue-500/20 active:scale-95">
-                                START ANALYSIS
+                            <p className="text-slate-400 text-xl mb-12 font-medium tracking-wide">AI 기반 지능형 조립 가이드 시스템</p>
+                            <button onClick={() => setView('upload')} className="bg-blue-600 text-white px-16 py-6 rounded-3xl font-black text-2xl hover:scale-105 transition-all shadow-2xl shadow-blue-500/40 active:scale-95">
+                                가이드 시작하기
                             </button>
                         </div>
                     )}
 
                     {view === 'upload' && (
-                        <div className="w-full max-w-xl glass p-12 rounded-[3.5rem] text-center">
-                            <h2 className="text-4xl font-black mb-8 text-blue-400">매뉴얼 업로드</h2>
-                            <div onClick={() => inputRef.current.click()} className="border-4 border-dashed border-slate-800 rounded-[2.5rem] p-20 cursor-pointer hover:bg-slate-900/50 transition-colors group">
+                        <div className="w-full max-w-xl glass p-10 rounded-[3rem] text-center shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
+                            <h2 className="text-4xl font-black mb-6 text-blue-400">매뉴얼 분석</h2>
+                            <p className="text-slate-400 mb-8">PDF 도면 또는 이미지 컷을 업로드하면 AI가 단계를 재구성합니다.</p>
+                            
+                            <div 
+                                onClick={() => !uploading && inputRef.current.click()} 
+                                className={`border-4 border-dashed rounded-[2.5rem] p-16 transition-all group ${uploading ? 'border-blue-500/50 bg-blue-500/5 cursor-wait' : 'border-slate-800 cursor-pointer hover:bg-slate-900/50 hover:border-blue-500/30'}`}
+                            >
                                 {uploading ? (
-                                    <div className="flex flex-col items-center gap-4">
-                                        <div className="w-14 h-14 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                        <p className="text-blue-500 font-black text-xl">AI가 조립 단계를 매칭 중입니다...</p>
+                                    <div className="flex flex-col items-center gap-6">
+                                        <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                        <div className="space-y-2">
+                                            <p className="text-blue-400 font-black text-xl">AI 조각 분석 중...</p>
+                                            <p className="text-slate-500 text-sm">OpenLoader & OpenCV 가동 중</p>
+                                        </div>
                                     </div>
                                 ) : (
-                                    <p className="text-slate-500 text-xl font-bold italic group-hover:text-slate-300">PDF 또는 이미지 파일을 드래그하세요</p>
+                                    <div className="space-y-4">
+                                        <div className="text-6xl mb-4">📁</div>
+                                        <p className="text-slate-300 text-xl font-bold italic">파일을 클릭하거나 드래그하세요</p>
+                                        <p className="text-slate-500 text-sm">지원 형식: PDF, JPG, PNG</p>
+                                    </div>
                                 )}
                             </div>
-                            <input type="file" multiple ref={inputRef} onChange={onUpload} className="hidden" />
+                            <input type="file" multiple ref={inputRef} onChange={onUpload} className="hidden" accept=".pdf,image/*" />
                         </div>
                     )}
 
                     {view === 'coach' && (
-                        <div className="w-full max-w-[1800px] flex gap-10 h-[90vh]">
-                            {/* 왼쪽: 단계 목록 (클릭 가능하도록 강화) */}
-                            <div className="w-1/4 glass rounded-[3.5rem] p-8 flex flex-col shadow-2xl overflow-hidden">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-3xl font-black italic text-blue-400 uppercase tracking-tighter">Guide</h2>
-                                    <span className="bg-slate-900 px-3 py-1 rounded-full text-[10px] font-mono text-emerald-400 border border-emerald-500/20">{status.analysis_time}s</span>
+                        <div className="w-full max-w-[1700px] flex gap-8 h-[88vh] animate-in fade-in duration-1000">
+                            {/* 왼쪽: 가이드 리스트 */}
+                            <div className="w-1/4 glass rounded-[3rem] p-6 flex flex-col shadow-2xl border border-white/5">
+                                <div className="flex justify-between items-center mb-6 px-2">
+                                    <h2 className="text-2xl font-black italic text-blue-400 uppercase tracking-tighter">Guide Steps</h2>
+                                    <div className="flex items-center gap-2">
+                                        <span className="bg-slate-900 px-3 py-1 rounded-full text-[10px] font-mono text-emerald-400 border border-emerald-500/20">
+                                            {status.analysis_time}s
+                                        </span>
+                                    </div>
                                 </div>
                                 
                                 {userSelectedIdx !== null && (
                                     <button 
-                                        onClick={(e) => { e.stopPropagation(); setUserSelectedIdx(null); }}
-                                        className="mb-6 py-3 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-2xl text-[11px] font-black hover:bg-emerald-500/20 transition-all uppercase tracking-widest active:scale-95"
+                                        onClick={() => setUserSelectedIdx(null)}
+                                        className="mb-4 py-3 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-2xl text-[11px] font-black hover:bg-blue-500/20 transition-all uppercase tracking-widest"
                                     >
-                                        ✨ RETURN TO AI FOLLOW MODE
+                                        ✨ 실시간 AI 추적 모드 복귀
                                     </button>
                                 )}
 
-                                <div className="flex-1 space-y-5 overflow-y-auto pr-3 custom-scrollbar">
-                                    {status.steps?.length > 0 ? status.steps.map((s, i) => (
+                                <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
+                                    {status.manual_steps?.map((s, i) => (
                                         <div 
                                             key={i} 
-                                            onClick={() => handleStepClick(i)}
-                                            className={`p-6 rounded-[2rem] clickable step-card ${
-                                                i === activeIdx ? 'active-user-step' : 'bg-slate-900/40 opacity-50 hover:opacity-100 hover:bg-slate-900/60'
-                                            } ${i === status.current_step_idx ? 'ring-2 ring-emerald-500/60' : ''}`}
+                                            onClick={() => setUserSelectedIdx(i)}
+                                            className={`p-5 rounded-[2rem] clickable step-card border ${
+                                                i === activeIdx ? 'active-user-step border-transparent' : 'bg-slate-900/40 border-white/5 opacity-60 hover:opacity-100 hover:bg-slate-900/60'
+                                            } ${i === status.current_step_idx ? 'ring-2 ring-emerald-500' : ''}`}
                                         >
-                                            <div className="flex justify-between items-start mb-2">
-                                                <p className="text-[10px] font-black opacity-60 uppercase tracking-widest">Step {i + 1}</p>
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="text-[10px] font-black opacity-70 uppercase tracking-widest">STEP {s.step || i + 1}</span>
                                                 {i === status.current_step_idx && (
-                                                    <span className="text-[9px] bg-emerald-500 text-white px-2 py-0.5 rounded-full animate-pulse font-black shadow-lg">AI NOW</span>
+                                                    <span className="text-[9px] bg-emerald-500 text-white px-2 py-0.5 rounded-full animate-pulse font-black">AI FOCUS</span>
                                                 )}
                                             </div>
-                                            <p className="text-lg font-bold leading-snug break-keep">{s.title}</p>
+                                            <p className="text-base font-bold leading-tight break-keep">{s.title}</p>
                                         </div>
-                                    )) : (
-                                        <div className="flex flex-col items-center justify-center h-40 opacity-20">
-                                            <p className="font-black italic">ANALYZING...</p>
-                                        </div>
-                                    )}
+                                    ))}
                                 </div>
                             </div>
 
-                            {/* 중앙: 실시간 피드 및 AI 메시지 */}
-                            <div className="flex-1 flex flex-col gap-8">
-                                <div className="glass rounded-[3rem] p-8 relative overflow-hidden border-l-[16px] border-blue-600 shadow-2xl">
-                                    <div className="flex items-center gap-3 mb-3">
+                            {/* 중앙: 실시간 시각 피드 */}
+                            <div className="flex-1 flex flex-col gap-6">
+                                <div className="glass rounded-[2.5rem] p-6 relative overflow-hidden border-l-[12px] border-blue-600 shadow-xl min-h-[120px] flex flex-col justify-center">
+                                    <div className="flex items-center gap-2 mb-2">
                                         <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
-                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Real-time Vision Feedback</span>
+                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest font-mono">Vision Analytics</span>
                                     </div>
-                                    <p className="text-4xl font-black leading-tight break-keep text-white/90">
-                                        {status.has_frame ? status.ai_response : "카메라를 연결하면 코칭이 시작됩니다."}
+                                    <p className="text-3xl font-black leading-tight text-white/95 break-keep">
+                                        {status.has_frame ? status.ai_response : "모바일 기기를 연결하여 실시간 코칭을 받으세요."}
                                     </p>
                                 </div>
 
-                                <div className="flex-1 glass rounded-[4.5rem] overflow-hidden relative shadow-2xl bg-black/50 border-[6px] border-slate-900/50">
+                                <div className="flex-1 glass rounded-[4rem] overflow-hidden relative shadow-2xl bg-black border-4 border-slate-900/50">
                                     {status.has_frame ? (
-                                        <img src="/stream" className="w-full h-full object-contain" alt="Live" />
+                                        <img src="/stream" className="w-full h-full object-contain" alt="Live Stream" />
                                     ) : (
-                                        <div className="w-full h-full flex flex-col items-center justify-center">
-                                            <div className="w-24 h-24 border-8 border-slate-900 border-t-blue-600 rounded-full animate-spin mb-8 shadow-2xl shadow-blue-500/20"></div>
-                                            <p className="text-3xl font-black mb-4 uppercase italic tracking-[0.2em] opacity-20">Awaiting Stream</p>
-                                            <div className="px-8 py-3 bg-blue-600/10 rounded-full border border-blue-500/20">
-                                                <p className="font-mono text-xs text-blue-400 font-bold tracking-wider uppercase">Connect via: {window.location.host}/mobile</p>
+                                        <div className="w-full h-full flex flex-col items-center justify-center bg-[#010409]">
+                                            <div className="w-20 h-20 border-4 border-slate-800 border-t-blue-600 rounded-full animate-spin mb-6"></div>
+                                            <p className="text-xl font-bold text-slate-600 italic tracking-widest uppercase mb-4">Awaiting Stream</p>
+                                            <div className="px-6 py-2 bg-blue-600/10 rounded-full border border-blue-500/20">
+                                                <code className="text-xs text-blue-400 font-bold">{window.location.host}/mobile</code>
                                             </div>
                                         </div>
                                     )}
                                 </div>
                             </div>
 
-                            {/* 오른쪽: 매뉴얼 상세 포커스 (선택한 단계 표시) */}
-                            <div className="w-1/4 flex flex-col gap-8">
-                                <div className="flex-1 glass rounded-[3.5rem] p-10 flex flex-col shadow-2xl overflow-hidden text-center">
-                                    <div className="mb-8">
-                                        <h2 className="text-3xl font-black italic text-blue-400 uppercase tracking-tighter">Focus</h2>
-                                        <div className="mt-3 inline-block px-4 py-1.5 bg-blue-600/10 rounded-full border border-blue-500/20">
-                                            <p className="text-[10px] text-blue-400 font-black uppercase tracking-widest">
-                                                {userSelectedIdx !== null ? `Step ${userSelectedIdx + 1} Viewing` : `Following AI Progress`}
-                                            </p>
+                            {/* 오른쪽: 상세 포커스 */}
+                            <div className="w-1/4 flex flex-col gap-6">
+                                <div className="flex-1 glass rounded-[3rem] p-8 flex flex-col shadow-2xl border border-white/5 overflow-hidden">
+                                    <div className="text-center mb-6">
+                                        <h2 className="text-2xl font-black italic text-blue-400 uppercase tracking-tighter">Manual Focus</h2>
+                                        <div className="mt-2 inline-block px-4 py-1 bg-blue-600/20 rounded-full border border-blue-500/30">
+                                            <span className="text-[10px] text-blue-300 font-black uppercase tracking-widest">
+                                                {userSelectedIdx !== null ? `Checking Step ${currentStep?.step || activeIdx + 1}` : "Smart Tracking"}
+                                            </span>
                                         </div>
                                     </div>
+                                    
                                     {currentStep ? (
-                                        <div className="flex-1 flex flex-col gap-8 overflow-hidden">
-                                            <div className="bg-white rounded-[2.5rem] p-6 h-[48%] flex items-center justify-center shadow-2xl border-4 border-slate-900/30 group">
+                                        <div className="flex-1 flex flex-col gap-6 overflow-hidden animate-in fade-in slide-in-from-right-5 duration-500">
+                                            <div className="bg-white rounded-[2rem] p-4 h-[45%] flex items-center justify-center shadow-inner overflow-hidden">
                                                 <img 
                                                     src={currentStep.image_url} 
-                                                    className="max-w-full max-h-full object-contain transform group-hover:scale-110 transition-transform duration-700" 
-                                                    alt="Detail" 
+                                                    className="max-w-full max-h-full object-contain hover:scale-110 transition-transform duration-500" 
+                                                    alt="Step Detail" 
                                                 />
                                             </div>
-                                            <div className="p-8 bg-slate-950/40 rounded-[2.5rem] border border-white/5 text-left overflow-y-auto flex-1 custom-scrollbar shadow-inner">
-                                                <div className="flex items-center gap-2 mb-4">
-                                                    <div className="w-1.5 h-4 bg-blue-500 rounded-full shadow-lg shadow-blue-500/50"></div>
-                                                    <p className="text-blue-400 font-black uppercase text-[11px] tracking-[0.15em]">Instructions</p>
+                                            <div className="flex-1 bg-slate-950/50 rounded-[2rem] p-6 border border-white/5 overflow-y-auto custom-scrollbar">
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <div className="w-1 h-3 bg-blue-500 rounded-full"></div>
+                                                    <span className="text-blue-400 font-black uppercase text-[10px] tracking-widest">Instructions</span>
                                                 </div>
-                                                <p className="text-slate-200 leading-relaxed text-base font-medium break-keep opacity-90">{currentStep.desc}</p>
+                                                <p className="text-slate-200 leading-relaxed font-medium break-keep">
+                                                    {currentStep.desc}
+                                                </p>
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="flex-1 flex flex-col items-center justify-center text-slate-800">
-                                            <p className="italic font-black text-2xl uppercase opacity-10">Select Step</p>
+                                        <div className="flex-1 flex items-center justify-center text-slate-700 italic font-black text-xl uppercase opacity-20">
+                                            No Data
                                         </div>
                                     )}
+                                </div>
+                                
+                                <div className="glass rounded-[2.5rem] p-6 text-center border border-white/5">
+                                    <button onClick={() => window.location.reload()} className="text-[10px] font-black text-slate-500 hover:text-white transition-colors uppercase tracking-widest">
+                                        RESET SESSION
+                                    </button>
                                 </div>
                             </div>
                         </div>
