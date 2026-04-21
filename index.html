@@ -23,7 +23,6 @@
         .clickable { cursor: pointer; pointer-events: auto !important; }
         .step-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; z-index: 10; }
         
-        /* 애니메이션 효과 */
         @keyframes pulse-soft {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.7; }
@@ -38,7 +37,7 @@
         const { useState, useEffect, useRef } = React;
 
         function App() {
-            // URL 파라미터나 경로로 모바일 뷰 판단
+            // URL 경로에 'mobile'이 포함되어 있으면 모바일 뷰로 진입
             const isMobile = window.location.pathname.includes('mobile') || window.location.search.includes('view=mobile');
             return isMobile ? <MobileView /> : <PCView />;
         }
@@ -73,7 +72,7 @@
                                     if(wsRef.current?.readyState === 1) wsRef.current.send(blob);
                                 }, 'image/jpeg', 0.5);
                             }
-                            setTimeout(sendFrame, 200); // 5fps 정도로 전송
+                            setTimeout(sendFrame, 150); // 약 7fps 전송
                         };
                         sendFrame();
                     } catch (e) { 
@@ -98,7 +97,14 @@
 
         function PCView() {
             const [view, setView] = useState('landing');
-            const [status, setStatus] = useState({ ai_response: '대기 중...', steps: [], current_step_idx: 0, has_frame: false, analysis_time: 0 });
+            const [status, setStatus] = useState({ 
+                ai_response: '대기 중...', 
+                manual_steps: [], 
+                current_step_idx: 0, 
+                has_frame: false, 
+                analysis_time: 0,
+                is_analyzed: false
+            });
             const [uploading, setUploading] = useState(false);
             const [userSelectedIdx, setUserSelectedIdx] = useState(null); 
             const inputRef = useRef(null);
@@ -112,7 +118,7 @@
                         setStatus(data);
                         
                         // 분석 완료 시 자동으로 코칭 화면으로 전환
-                        if (data.manual_steps?.length > 0 && view === 'upload' && !uploading) {
+                        if (data.is_analyzed && data.manual_steps?.length > 0 && (view === 'upload' || view === 'landing') && !uploading) {
                             setView('coach');
                         }
                     } catch (e) {}
@@ -125,6 +131,7 @@
                 if (!files.length) return;
                 
                 setUploading(true);
+                setView('upload');
                 const fd = new FormData();
                 for (let f of files) fd.append('files', f);
                 
@@ -133,11 +140,11 @@
                     const data = await res.json();
                     if (data.status === "success") {
                         setUploading(false);
-                        setView('coach');
                     }
                 } catch (e) {
                     console.error("Upload failed", e);
                     setUploading(false);
+                    setView('landing');
                 }
             };
 
@@ -161,7 +168,7 @@
                     {view === 'upload' && (
                         <div className="w-full max-w-xl glass p-10 rounded-[3rem] text-center shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
                             <h2 className="text-4xl font-black mb-6 text-blue-400">매뉴얼 분석</h2>
-                            <p className="text-slate-400 mb-8">PDF 도면 또는 이미지 컷을 업로드하면 AI가 단계를 재구성합니다.</p>
+                            <p className="text-slate-400 mb-8">AI가 이미지와 지시문을 정밀하게 추출하고 있습니다.</p>
                             
                             <div 
                                 onClick={() => !uploading && inputRef.current.click()} 
@@ -171,15 +178,15 @@
                                     <div className="flex flex-col items-center gap-6">
                                         <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                                         <div className="space-y-2">
-                                            <p className="text-blue-400 font-black text-xl">AI 조각 분석 중...</p>
-                                            <p className="text-slate-500 text-sm">OpenLoader & OpenCV 가동 중</p>
+                                            <p className="text-blue-400 font-black text-xl">지시문 추출 중...</p>
+                                            <p className="text-slate-500 text-sm">원본 텍스트를 우선적으로 가져오고 있습니다</p>
                                         </div>
                                     </div>
                                 ) : (
                                     <div className="space-y-4">
                                         <div className="text-6xl mb-4">📁</div>
                                         <p className="text-slate-300 text-xl font-bold italic">파일을 클릭하거나 드래그하세요</p>
-                                        <p className="text-slate-500 text-sm">지원 형식: PDF, JPG, PNG</p>
+                                        <p className="text-slate-500 text-sm">PDF 또는 이미지 (지시문 포함 권장)</p>
                                     </div>
                                 )}
                             </div>
@@ -190,7 +197,7 @@
                     {view === 'coach' && (
                         <div className="w-full max-w-[1700px] flex gap-8 h-[88vh] animate-in fade-in duration-1000">
                             {/* 왼쪽: 가이드 리스트 */}
-                            <div className="w-1/4 glass rounded-[3rem] p-6 flex flex-col shadow-2xl border border-white/5">
+                            <div className="w-1/4 glass rounded-[3rem] p-6 flex flex-col shadow-2xl border border-white/5 overflow-hidden">
                                 <div className="flex justify-between items-center mb-6 px-2">
                                     <h2 className="text-2xl font-black italic text-blue-400 uppercase tracking-tighter">Guide Steps</h2>
                                     <div className="flex items-center gap-2">
@@ -215,11 +222,11 @@
                                             key={i} 
                                             onClick={() => setUserSelectedIdx(i)}
                                             className={`p-5 rounded-[2rem] clickable step-card border ${
-                                                i === activeIdx ? 'active-user-step border-transparent' : 'bg-slate-900/40 border-white/5 opacity-60 hover:opacity-100 hover:bg-slate-900/60'
+                                                i === activeIdx ? 'active-user-step border-transparent' : 'bg-slate-900/40 border-white/5 opacity-60 hover:opacity-100'
                                             } ${i === status.current_step_idx ? 'ring-2 ring-emerald-500' : ''}`}
                                         >
                                             <div className="flex justify-between items-center mb-2">
-                                                <span className="text-[10px] font-black opacity-70 uppercase tracking-widest">STEP {s.step || i + 1}</span>
+                                                <span className="text-[10px] font-black opacity-70 uppercase tracking-widest">STEP {s.step}</span>
                                                 {i === status.current_step_idx && (
                                                     <span className="text-[9px] bg-emerald-500 text-white px-2 py-0.5 rounded-full animate-pulse font-black">AI FOCUS</span>
                                                 )}
@@ -264,7 +271,7 @@
                                         <h2 className="text-2xl font-black italic text-blue-400 uppercase tracking-tighter">Manual Focus</h2>
                                         <div className="mt-2 inline-block px-4 py-1 bg-blue-600/20 rounded-full border border-blue-500/30">
                                             <span className="text-[10px] text-blue-300 font-black uppercase tracking-widest">
-                                                {userSelectedIdx !== null ? `Checking Step ${currentStep?.step || activeIdx + 1}` : "Smart Tracking"}
+                                                Step {currentStep?.step}
                                             </span>
                                         </div>
                                     </div>
