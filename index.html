@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Comm-Test: Fixed 1080x1920 Resolution</title>
+    <title>Binary ABS Reporter (1080x1920)</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -28,40 +28,36 @@
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
             const wsRef = useRef(null);
-            const [status, setStatus] = useState("Initializing...");
             const [connected, setConnected] = useState(false);
-            const lastRTT = useRef(0);
+            const lastRtt = useRef(0); // 마지막 측정된 RTT 저장
 
             useEffect(() => {
                 const init = async () => {
                     try {
-                        // 🌟 Requesting FHD Portrait resolution
                         const stream = await navigator.mediaDevices.getUserMedia({
                             video: { 
-                                facingMode: 'environment',
+                                facingMode: 'environment', 
                                 width: { ideal: 1080 }, 
                                 height: { ideal: 1920 } 
-                            },
-                            audio: false
+                            }
                         });
                         if (videoRef.current) videoRef.current.srcObject = stream;
                         
                         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                        const wsUrl = `${protocol}//${window.location.host}/ws`;
-                        wsRef.current = new WebSocket(wsUrl);
-                        
-                        wsRef.current.onopen = () => { setConnected(true); setStatus("Connected (1080x1920)"); };
-                        wsRef.current.onclose = () => { setConnected(false); setStatus("Disconnected"); };
-                        
-                        wsRef.current.onmessage = (msg) => {
-                            const data = JSON.parse(msg.data);
-                            if (data.pong) lastRTT.current = Date.now() - data.pong;
+                        wsRef.current = new WebSocket(`${protocol}//${window.location.host}/ws`);
+                        wsRef.current.binaryType = "arraybuffer"; 
+
+                        wsRef.current.onopen = () => setConnected(true);
+                        wsRef.current.onmessage = (e) => {
+                            const view = new Float64Array(e.data);
+                            // 서버에서 즉시 반환한 시간을 바탕으로 RTT 계산
+                            lastRtt.current = Date.now() - view[0];
                         };
 
                         const sendFrame = () => {
                             const ws = wsRef.current;
                             if (ws?.readyState === 1 && videoRef.current?.readyState === 4) {
-                                // 🌟 Backpressure check: Skip frame if buffer is full
+                                // Backpressure: 전송 버퍼가 차있으면 프레임 드랍
                                 if (ws.bufferedAmount > 0) {
                                     requestAnimationFrame(sendFrame);
                                     return;
@@ -71,43 +67,42 @@
                                 const canvas = canvasRef.current;
                                 const ctx = canvas.getContext('2d');
                                 
-                                // 🌟 Fixed target resolution: 1080x1920
+                                // 🌟 해상도 설정: 1080x1920 고정
                                 const targetW = 1080; 
                                 const targetH = 1920;
+                                if (canvas.width !== targetW) { canvas.width = targetW; canvas.height = targetH; }
 
-                                if (canvas.width !== targetW) {
-                                    canvas.width = targetW;
-                                    canvas.height = targetH;
-                                }
-
-                                // Center Crop Logic to maintain 9:16 aspect ratio without stretching
+                                // 중앙 크롭 로직 (9:16 비율 유지)
                                 const vW = video.videoWidth;
                                 const vH = video.videoHeight;
-                                const targetAspect = targetW / targetH;
-                                
+                                const aspect = targetW / targetH;
                                 let sX, sY, sW, sH;
-                                if ((vW / vH) > targetAspect) {
-                                    sH = vH; sW = vH * targetAspect;
+                                if ((vW / vH) > aspect) {
+                                    sH = vH; sW = vH * aspect;
                                     sX = (vW - sW) / 2; sY = 0;
                                 } else {
-                                    sW = vW; sH = vW / targetAspect;
+                                    sW = vW; sH = vW / aspect;
                                     sX = 0; sY = (vH - sH) / 2;
                                 }
 
                                 ctx.drawImage(video, sX, sY, sW, sH, 0, 0, targetW, targetH);
                                 
-                                const data = {
-                                    data: canvas.toDataURL('image/jpeg', 0.4),
-                                    send_time: Date.now(),
-                                    rtt: lastRTT.current
-                                };
-                                ws.send(JSON.stringify(data));
+                                // 🌟 Binary 전송: 16바이트 헤더 [발송시간, RTT] 포함
+                                canvas.toBlob((blob) => {
+                                    const sendTime = Date.now();
+                                    const headerBuffer = new ArrayBuffer(16);
+                                    const headerView = new Float64Array(headerBuffer);
+                                    headerView[0] = sendTime;
+                                    headerView[1] = lastRtt.current;
+
+                                    const combined = new Blob([headerBuffer, blob]);
+                                    ws.send(combined);
+                                }, 'image/jpeg', 0.4);
                             }
-                            // Attempt to send every 50ms
                             setTimeout(() => requestAnimationFrame(sendFrame), 50); 
                         };
                         sendFrame();
-                    } catch (e) { setStatus("Error: " + e.message); }
+                    } catch (e) { console.error("Camera error:", e); }
                 };
                 init();
                 return () => wsRef.current?.close();
@@ -115,20 +110,20 @@
 
             return (
                 <div className="h-screen bg-black flex flex-col items-center justify-center relative">
-                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover opacity-80" />
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover opacity-60" />
                     <canvas ref={canvasRef} style={{ display: 'none' }} />
-                    <div className="absolute top-10 px-6 py-2 rounded-full font-bold text-xs bg-black/70 border border-white/20">
-                         One-way Latency: {Math.round(lastRTT.current/2)}ms
+                    <div className="absolute top-10 px-6 py-2 rounded-full font-bold text-xs bg-black/50 border border-white/20">
+                         Current ABS: {Math.round(lastRtt.current/2)}ms | 1080x1920
                     </div>
-                    <div className={`absolute bottom-10 px-8 py-4 rounded-full font-black text-white shadow-2xl transition-all ${connected ? 'bg-blue-600' : 'bg-red-600'}`}>
-                        {status}
+                    <div className={`absolute px-8 py-4 rounded-full font-black text-white ${connected ? 'bg-blue-600 shadow-lg' : 'bg-red-600'}`}>
+                        {connected ? "FHD BINARY STREAMING" : "CONNECTING..."}
                     </div>
                 </div>
             );
         }
 
         function PCMonitor() {
-            const [status, setStatus] = useState({ has_frame: false, ai_feedback: 'Waiting for Mobile...' });
+            const [status, setStatus] = useState({ log: 'Waiting for stream...' });
 
             useEffect(() => {
                 const timer = setInterval(async () => {
@@ -143,21 +138,13 @@
 
             return (
                 <div className="min-h-screen bg-[#020617] text-white p-10 flex flex-col items-center gap-8">
-                    <div className="text-center">
-                        <h1 className="text-6xl font-black italic tracking-tighter bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent uppercase tracking-tight">1080x1920 Test</h1>
-                        <p className="text-slate-500 mt-2 font-mono">Access: {window.location.host}/mobile</p>
+                    <h1 className="text-5xl font-black italic tracking-tighter text-blue-500 uppercase">FHD Binary ABS Monitor</h1>
+                    <div className="w-full max-w-4xl glass p-8 border-l-[12px] border-blue-600 shadow-2xl">
+                        <p className="text-sm font-black text-blue-400 uppercase mb-2">Server-Side Metrics</p>
+                        <p className="text-xl font-mono break-all bg-black/30 p-4 rounded-xl border border-white/5">{status.log}</p>
                     </div>
-                    <div className="w-full max-w-5xl flex flex-col gap-6">
-                        <div className="glass rounded-[2.5rem] p-8 border-l-[12px] border-blue-600 shadow-2xl text-center">
-                            <p className="text-3xl font-bold">{status.ai_feedback}</p>
-                        </div>
-                        <div className="glass rounded-[3rem] overflow-hidden border-4 border-slate-900 bg-black flex items-center justify-center aspect-[9/16] max-h-[70vh] mx-auto">
-                            {status.has_frame ? (
-                                <img src="/stream" className="w-full h-full object-contain" alt="FHD Stream" />
-                            ) : (
-                                <div className="animate-pulse text-slate-700">AWAITING FHD STREAM...</div>
-                            )}
-                        </div>
+                    <div className="aspect-[9/16] h-[65vh] glass rounded-[3rem] overflow-hidden border-4 border-slate-900 bg-black">
+                        <img src="/stream" className="w-full h-full object-contain" />
                     </div>
                 </div>
             );

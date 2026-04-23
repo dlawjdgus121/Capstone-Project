@@ -1,0 +1,100 @@
+[13:17:55] Test #  1 | Scale: 100% | Res: 1080x1920 | ABS:  76.0ms | Adj:    0.0ms | Bytes:  109304
+[13:17:55] Test #  2 | Scale: 100% | Res: 1080x1920 | ABS:  85.0ms | Adj:   -6.5ms | Bytes:  109895
+[13:17:55] Test #  3 | Scale: 100% | Res: 1080x1920 | ABS:  53.5ms | Adj:   39.8ms | Bytes:  109126
+[13:17:55] Test #  4 | Scale: 100% | Res: 1080x1920 | ABS:  42.0ms | Adj:  124.9ms | Bytes:  108427
+[13:17:56] Test #  5 | Scale: 100% | Res: 1080x1920 | ABS:  63.0ms | Adj:  205.0ms | Bytes:  109170
+[13:17:56] Test #  6 | Scale: 100% | Res: 1080x1920 | ABS:  63.0ms | Adj:  197.0ms | Bytes:  110422
+[13:17:56] Test #  7 | Scale: 100% | Res: 1080x1920 | ABS:  63.0ms | Adj:  246.4ms | Bytes:  109205
+[13:17:56] Test #  8 | Scale: 100% | Res: 1080x1920 | ABS: 134.5ms | Adj:  300.2ms | Bytes:  110441
+[13:17:56] Test #  9 | Scale: 100% | Res: 1080x1920 | ABS: 134.5ms | Adj:  273.4ms | Bytes:  110354
+[13:17:56] Test # 10 | Scale: 100% | Res: 1080x1920 | ABS: 154.5ms | Adj:  290.3ms | Bytes:  110206
+[13:17:56] Test # 11 | Scale:  90% | Res:  972x1728 | ABS: 169.5ms | Adj:  399.8ms | Bytes:  108678
+[13:17:56] Test # 12 | Scale:  90% | Res:  972x1728 | ABS: 169.5ms | Adj:  532.1ms | Bytes:  111097
+[13:17:57] Test # 13 | Scale:  90% | Res:  972x1728 | ABS: 195.0ms | Adj:  514.9ms | Bytes:  111726
+[13:17:57] Test # 14 | Scale:  90% | Res:  972x1728 | ABS: 203.0ms | Adj:  514.4ms | Bytes:  109144
+[13:17:57] Test # 15 | Scale:  90% | Res:  972x1728 | ABS: 197.0ms | Adj:  495.0ms | Bytes:  109509
+[13:17:57] Test # 16 | Scale:  90% | Res:  972x1728 | ABS: 197.0ms | Adj:  466.9ms | Bytes:  110269
+[13:17:57] Test # 17 | Scale:  90% | Res:  972x1728 | ABS: 197.0ms | Adj:  465.7ms | Bytes:  110325
+[13:17:57] Test # 18 | Scale:  90% | Res:  972x1728 | ABS: 197.0ms | Adj:  438.9ms | Bytes:  110677
+[13:17:57] Test # 19 | Scale:  90% | Res:  972x1728 | ABS: 197.0ms | Adj:  394.4ms | Bytes:  111181
+[13:17:57] Test # 20 | Scale:  90% | Res:  972x1728 | ABS: 197.0ms | Adj:  349.2ms | Bytes:  110855
+[13:17:57] Test # 21 | Scale:  80% | Res:  864x1536 | ABS: 327.5ms | Adj:  304.5ms | Bytes:  108440
+[13:17:57] Test # 22 | Scale:  80% | Res:  864x1536 | ABS: 327.5ms | Adj:  248.1ms | Bytes:  108864
+[13:17:57] Test # 23 | Scale:  80% | Res:  864x1536 | ABS: 321.5ms | Adj:  218.7ms | Bytes:  110547
+[13:17:57] Test # 24 | Scale:  80% | Res:  864x1536 | ABS: 312.0ms | Adj:  180.3ms | Bytes:  109081
+[13:17:57] Test # 25 | Scale:  80% | Res:  864x1536 | ABS: 313.5ms | Adj:  140.4ms | Bytes:  105344
+[13:17:57] Test # 26 | Scale:  80% | Res:  864x1536 | ABS: 249.0ms | Adj:  114.1ms | Bytes:  106468
+[13:17:57] Test # 27 | Scale:  80% | Res:  864x1536 | ABS: 171.5ms | Adj:   69.5ms | Bytes:  110307
+[13:17:57] Test # 28 | Scale:  80% | Res:  864x1536 | ABS: 157.5ms | Adj:   51.8ms | Bytes:  107901
+[13:17:57] Test # 29 | Scale:  80% | Res:  864x1536 | ABS: 120.5ms | Adj:    8.3ms | Bytes:  104775
+[13:17:57] Test # 30 | Scale:  80% | Res:  864x1536 | ABS:  90.0ms | Adj:  -31.6ms | Bytes:  108359
+[13:17:57] Test # 31 | Scale:  70% | Res:  756x1344 | ABS:  52.0ms | Adj:  -23.2ms | Bytes:  106554
+[13:17:57] Test # 32 | Scale:  70% | Res:  756x1344 | ABS:  38.0ms | Adj:  -35.2ms | Bytes:  107007
+[13:17:58] Test # 33 | Scale:  70% | Res:  756x1344 | ABS:  39.0ms | Adj:   -7.9ms | Bytes:  107374
+[13:17:58] Test # 34 | Scale:  70% | Res:  756x1344 | ABS:  39.0ms | Adj:  -22.4ms | Bytes:  107880
+[13:17:58] Test # 35 | Scale:  70% | Res:  756x1344 | ABS:  45.5ms | Adj:   17.3ms | Bytes:  106961
+[13:17:58] Test # 36 | Scale:  70% | Res:  756x1344 | ABS:  43.5ms | Adj:    4.5ms | Bytes:  108631
+[13:17:58] Test # 37 | Scale:  70% | Res:  756x1344 | ABS:  43.5ms | Adj:  -22.0ms | Bytes:  109264
+[13:17:58] Test # 38 | Scale:  70% | Res:  756x1344 | ABS:  59.5ms | Adj:  -21.6ms | Bytes:  108887
+[13:17:58] Test # 39 | Scale:  70% | Res:  756x1344 | ABS:  45.0ms | Adj:  -27.4ms | Bytes:  108142
+[13:17:58] Test # 40 | Scale:  70% | Res:  756x1344 | ABS:  47.5ms | Adj:  -35.7ms | Bytes:  107762
+[13:17:58] Test # 41 | Scale:  60% | Res:  648x1152 | ABS:  47.0ms | Adj:  -53.5ms | Bytes:  104511
+[13:17:58] Test # 42 | Scale:  60% | Res:  648x1152 | ABS:  45.0ms | Adj:  -46.6ms | Bytes:  103157
+[13:17:58] Test # 43 | Scale:  60% | Res:  648x1152 | ABS:  39.5ms | Adj:  -57.3ms | Bytes:  108267
+[13:17:58] Test # 44 | Scale:  60% | Res:  648x1152 | ABS:  22.0ms | Adj:  -19.9ms | Bytes:  108296
+[13:17:58] Test # 45 | Scale:  60% | Res:  648x1152 | ABS:  22.0ms | Adj:  -29.9ms | Bytes:  108378
+[13:17:59] Test # 46 | Scale:  60% | Res:  648x1152 | ABS:  42.0ms | Adj:  -48.9ms | Bytes:  109001
+[13:17:59] Test # 47 | Scale:  60% | Res:  648x1152 | ABS:  39.5ms | Adj:  -59.5ms | Bytes:  109617
+[13:17:59] Test # 48 | Scale:  60% | Res:  648x1152 | ABS:  39.0ms | Adj:  -47.7ms | Bytes:  109295
+[13:17:59] Test # 49 | Scale:  60% | Res:  648x1152 | ABS:  40.0ms | Adj:   -0.8ms | Bytes:  110539
+[13:17:59] Test # 50 | Scale:  60% | Res:  648x1152 | ABS:  39.0ms | Adj:  -50.3ms | Bytes:  109906
+[13:17:59] Test # 51 | Scale:  50% | Res:  540x 960 | ABS:  53.5ms | Adj:  -46.2ms | Bytes:  109671
+[13:17:59] Test # 52 | Scale:  50% | Res:  540x 960 | ABS:  39.0ms | Adj:  -39.9ms | Bytes:  110503
+[13:17:59] Test # 53 | Scale:  50% | Res:  540x 960 | ABS:  38.5ms | Adj:  -41.8ms | Bytes:  111687
+[13:17:59] Test # 54 | Scale:  50% | Res:  540x 960 | ABS:  38.5ms | Adj:  -49.6ms | Bytes:  110571
+[13:17:59] Test # 55 | Scale:  50% | Res:  540x 960 | ABS:  39.5ms | Adj:   41.8ms | Bytes:  111437
+[13:17:59] Test # 56 | Scale:  50% | Res:  540x 960 | ABS:  46.5ms | Adj:   38.0ms | Bytes:  110327
+[13:17:59] Test # 57 | Scale:  50% | Res:  540x 960 | ABS:  46.5ms | Adj:   43.0ms | Bytes:  110476
+[13:18:00] Test # 58 | Scale:  50% | Res:  540x 960 | ABS:  77.5ms | Adj:   30.0ms | Bytes:  110349
+[13:18:00] Test # 59 | Scale:  50% | Res:  540x 960 | ABS:  82.5ms | Adj:   14.5ms | Bytes:  110813
+[13:18:00] Test # 60 | Scale:  50% | Res:  540x 960 | ABS:  78.5ms | Adj:  -11.9ms | Bytes:  111028
+[13:18:00] Test # 61 | Scale:  40% | Res:  432x 768 | ABS:  81.5ms | Adj:   -9.1ms | Bytes:  110773
+[13:18:00] Test # 62 | Scale:  40% | Res:  432x 768 | ABS:  55.5ms | Adj:  -33.6ms | Bytes:  111556
+[13:18:00] Test # 63 | Scale:  40% | Res:  432x 768 | ABS:  54.0ms | Adj:   22.8ms | Bytes:  112141
+[13:18:00] Test # 64 | Scale:  40% | Res:  432x 768 | ABS:  43.0ms | Adj:  -23.2ms | Bytes:  109934
+[13:18:00] Test # 65 | Scale:  40% | Res:  432x 768 | ABS:  43.0ms | Adj:  -28.9ms | Bytes:  112300
+[13:18:00] Test # 66 | Scale:  40% | Res:  432x 768 | ABS:  53.0ms | Adj:  -37.8ms | Bytes:  111367
+[13:18:00] Test # 67 | Scale:  40% | Res:  432x 768 | ABS:  45.0ms | Adj:  -27.3ms | Bytes:  111637
+[13:18:00] Test # 68 | Scale:  40% | Res:  432x 768 | ABS:  45.5ms | Adj:  -11.6ms | Bytes:  111310
+[13:18:00] Test # 69 | Scale:  40% | Res:  432x 768 | ABS:  56.5ms | Adj:  -33.0ms | Bytes:  112463
+[13:18:00] Test # 70 | Scale:  40% | Res:  432x 768 | ABS:  52.5ms | Adj:  -30.2ms | Bytes:  111285
+[13:18:00] Test # 71 | Scale:  30% | Res:  324x 576 | ABS:  43.5ms | Adj:  -45.6ms | Bytes:  110169
+[13:18:01] Test # 72 | Scale:  30% | Res:  324x 576 | ABS:  44.0ms | Adj:  -24.7ms | Bytes:  110906
+[13:18:01] Test # 73 | Scale:  30% | Res:  324x 576 | ABS:  44.5ms | Adj:  -26.1ms | Bytes:  111374
+[13:18:01] Test # 74 | Scale:  30% | Res:  324x 576 | ABS:  58.5ms | Adj:  -54.7ms | Bytes:  112020
+[13:18:01] Test # 75 | Scale:  30% | Res:  324x 576 | ABS:  54.0ms | Adj:  -18.1ms | Bytes:  112368
+[13:18:01] Test # 76 | Scale:  30% | Res:  324x 576 | ABS:  39.0ms | Adj:  -66.6ms | Bytes:  112575
+[13:18:01] Test # 77 | Scale:  30% | Res:  324x 576 | ABS:  25.5ms | Adj:  -65.2ms | Bytes:  111641
+[13:18:01] Test # 78 | Scale:  30% | Res:  324x 576 | ABS:  25.5ms | Adj:  -25.2ms | Bytes:  112261
+[13:18:01] Test # 79 | Scale:  30% | Res:  324x 576 | ABS:  39.0ms | Adj:  -50.7ms | Bytes:  112289
+[13:18:01] Test # 80 | Scale:  30% | Res:  324x 576 | ABS:  51.0ms | Adj:  -42.7ms | Bytes:  111419
+[13:18:01] Test # 81 | Scale:  20% | Res:  216x 384 | ABS:  41.0ms | Adj:  -19.3ms | Bytes:  111045
+[13:18:01] Test # 82 | Scale:  20% | Res:  216x 384 | ABS:  45.0ms | Adj:  -18.9ms | Bytes:  111602
+[13:18:01] Test # 83 | Scale:  20% | Res:  216x 384 | ABS:  61.5ms | Adj:  -36.4ms | Bytes:  110796
+[13:18:01] Test # 84 | Scale:  20% | Res:  216x 384 | ABS:  61.5ms | Adj:  -10.5ms | Bytes:  113239
+[13:18:02] Test # 85 | Scale:  20% | Res:  216x 384 | ABS:  44.0ms | Adj:  102.9ms | Bytes:  112702
+[13:18:02] Test # 86 | Scale:  20% | Res:  216x 384 | ABS:  44.0ms | Adj:  193.4ms | Bytes:  112746
+[13:18:02] Test # 87 | Scale:  20% | Res:  216x 384 | ABS:  76.5ms | Adj:  209.4ms | Bytes:  112061
+[13:18:02] Test # 88 | Scale:  20% | Res:  216x 384 | ABS:  76.5ms | Adj:  194.1ms | Bytes:  112266
+[13:18:02] Test # 89 | Scale:  20% | Res:  216x 384 | ABS: 129.5ms | Adj:  197.9ms | Bytes:  111594
+[13:18:02] Test # 90 | Scale:  20% | Res:  216x 384 | ABS: 129.5ms | Adj:  168.8ms | Bytes:  109332
+[13:18:02] Test # 91 | Scale:  10% | Res:  108x 192 | ABS: 159.5ms | Adj:  129.3ms | Bytes:  110026
+[13:18:02] Test # 92 | Scale:  10% | Res:  108x 192 | ABS: 167.5ms | Adj:  108.2ms | Bytes:  109944
+[13:18:02] Test # 93 | Scale:  10% | Res:  108x 192 | ABS: 164.5ms | Adj:   66.8ms | Bytes:  110334
+[13:18:02] Test # 94 | Scale:  10% | Res:  108x 192 | ABS: 159.5ms | Adj:   74.9ms | Bytes:  107849
+[13:18:02] Test # 95 | Scale:  10% | Res:  108x 192 | ABS: 119.5ms | Adj:  105.9ms | Bytes:  105275
+[13:18:03] Test # 96 | Scale:  10% | Res:  108x 192 | ABS: 120.0ms | Adj:  148.1ms | Bytes:  100687
+[13:18:03] Test # 97 | Scale:  10% | Res:  108x 192 | ABS: 116.0ms | Adj:  158.4ms | Bytes:  107578
+[13:18:03] Test # 98 | Scale:  10% | Res:  108x 192 | ABS: 115.5ms | Adj:  109.1ms | Bytes:  110099
+[13:18:03] Test # 99 | Scale:  10% | Res:  108x 192 | ABS: 116.0ms | Adj:   94.0ms | Bytes:  108643
+[13:18:03] Test #100 | Scale:  10% | Res:  108x 192 | ABS: 136.5ms | Adj:   65.0ms | Bytes:  109932

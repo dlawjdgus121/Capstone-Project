@@ -1,0 +1,100 @@
+[13:15:56] Test #  1 | Scale: 100% | Res: 1080x1440 | ABS:  19.0ms | Adj:    0.0ms | Proc: 0.0ms
+[13:15:56] Test #  2 | Scale: 100% | Res: 1080x1440 | ABS:  19.0ms | Adj:   -5.9ms | Proc: 0.0ms
+[13:15:56] Test #  3 | Scale: 100% | Res: 1080x1440 | ABS:  23.0ms | Adj:   -7.1ms | Proc: 0.0ms
+[13:15:56] Test #  4 | Scale: 100% | Res: 1080x1440 | ABS:  19.5ms | Adj:    1.9ms | Proc: 0.0ms
+[13:15:56] Test #  5 | Scale: 100% | Res: 1080x1440 | ABS:  25.0ms | Adj:    9.0ms | Proc: 0.0ms
+[13:15:56] Test #  6 | Scale: 100% | Res: 1080x1440 | ABS:  25.0ms | Adj:    8.1ms | Proc: 0.0ms
+[13:15:57] Test #  7 | Scale: 100% | Res: 1080x1440 | ABS:  38.5ms | Adj:   -1.9ms | Proc: 0.0ms
+[13:15:57] Test #  8 | Scale: 100% | Res: 1080x1440 | ABS:  22.0ms | Adj:   -6.4ms | Proc: 0.0ms
+[13:15:57] Test #  9 | Scale: 100% | Res: 1080x1440 | ABS:  19.5ms | Adj:    7.0ms | Proc: 0.0ms
+[13:15:57] Test # 10 | Scale: 100% | Res: 1080x1440 | ABS:  19.5ms | Adj:   16.9ms | Proc: 0.0ms
+[13:15:57] Test # 11 | Scale:  90% | Res:  972x1296 | ABS:  38.5ms | Adj:   11.3ms | Proc: 8.27ms
+[13:15:57] Test # 12 | Scale:  90% | Res:  972x1296 | ABS:  39.0ms | Adj:    8.2ms | Proc: 1.39ms
+[13:15:57] Test # 13 | Scale:  90% | Res:  972x1296 | ABS:  38.5ms | Adj:   -8.1ms | Proc: 1.36ms
+[13:15:57] Test # 14 | Scale:  90% | Res:  972x1296 | ABS:  18.5ms | Adj:   51.9ms | Proc: 1.46ms
+[13:15:57] Test # 15 | Scale:  90% | Res:  972x1296 | ABS:  18.5ms | Adj:   13.1ms | Proc: 1.13ms
+[13:15:57] Test # 16 | Scale:  90% | Res:  972x1296 | ABS:  48.0ms | Adj:   18.3ms | Proc: 2.62ms
+[13:15:57] Test # 17 | Scale:  90% | Res:  972x1296 | ABS:  38.5ms | Adj:   18.8ms | Proc: 2.81ms
+[13:15:57] Test # 18 | Scale:  90% | Res:  972x1296 | ABS:  39.5ms | Adj:   12.0ms | Proc: 1.98ms
+[13:15:58] Test # 19 | Scale:  90% | Res:  972x1296 | ABS:  26.0ms | Adj:   81.9ms | Proc: 2.6ms
+[13:15:58] Test # 20 | Scale:  90% | Res:  972x1296 | ABS:  26.0ms | Adj:   31.3ms | Proc: 1.08ms
+[13:15:58] Test # 21 | Scale:  80% | Res:  864x1152 | ABS:  62.5ms | Adj:   56.8ms | Proc: 0.97ms
+[13:15:58] Test # 22 | Scale:  80% | Res:  864x1152 | ABS:  38.0ms | Adj:   29.9ms | Proc: 0.96ms
+[13:15:58] Test # 23 | Scale:  80% | Res:  864x1152 | ABS:  47.0ms | Adj:   47.2ms | Proc: 1.49ms
+[13:15:58] Test # 24 | Scale:  80% | Res:  864x1152 | ABS:  38.0ms | Adj:   39.3ms | Proc: 0.75ms
+[13:15:58] Test # 25 | Scale:  80% | Res:  864x1152 | ABS:  48.5ms | Adj:   53.8ms | Proc: 1.01ms
+[13:15:58] Test # 26 | Scale:  80% | Res:  864x1152 | ABS:  39.0ms | Adj:   48.4ms | Proc: 1.78ms
+[13:15:58] Test # 27 | Scale:  80% | Res:  864x1152 | ABS:  45.5ms | Adj:   31.3ms | Proc: 1.39ms
+[13:15:58] Test # 28 | Scale:  80% | Res:  864x1152 | ABS:  41.5ms | Adj:   27.9ms | Proc: 1.13ms
+[13:15:58] Test # 29 | Scale:  80% | Res:  864x1152 | ABS:  39.0ms | Adj:   29.8ms | Proc: 1.61ms
+[13:15:58] Test # 30 | Scale:  80% | Res:  864x1152 | ABS:  39.0ms | Adj:   35.6ms | Proc: 1.6ms
+[13:15:58] Test # 31 | Scale:  70% | Res:  756x1008 | ABS:  38.5ms | Adj:   25.8ms | Proc: 1.13ms
+[13:15:58] Test # 32 | Scale:  70% | Res:  756x1008 | ABS:  39.0ms | Adj:   26.2ms | Proc: 0.75ms
+[13:15:59] Test # 33 | Scale:  70% | Res:  756x1008 | ABS:  38.0ms | Adj:   47.1ms | Proc: 0.95ms
+[13:15:59] Test # 34 | Scale:  70% | Res:  756x1008 | ABS:  38.5ms | Adj:   91.0ms | Proc: 1.02ms
+[13:15:59] Test # 35 | Scale:  70% | Res:  756x1008 | ABS:  47.0ms | Adj:   51.5ms | Proc: 1.24ms
+[13:15:59] Test # 36 | Scale:  70% | Res:  756x1008 | ABS:  61.0ms | Adj:   46.3ms | Proc: 1.6ms
+[13:15:59] Test # 37 | Scale:  70% | Res:  756x1008 | ABS:  40.0ms | Adj:   53.3ms | Proc: 1.5ms
+[13:15:59] Test # 38 | Scale:  70% | Res:  756x1008 | ABS:  39.0ms | Adj:   34.2ms | Proc: 0.87ms
+[13:15:59] Test # 39 | Scale:  70% | Res:  756x1008 | ABS:  42.5ms | Adj:   56.4ms | Proc: 1.47ms
+[13:15:59] Test # 40 | Scale:  70% | Res:  756x1008 | ABS:  39.0ms | Adj:   99.6ms | Proc: 1.21ms
+[13:15:59] Test # 41 | Scale:  60% | Res:  648x 864 | ABS:  43.0ms | Adj:   66.4ms | Proc: 0.79ms
+[13:15:59] Test # 42 | Scale:  60% | Res:  648x 864 | ABS:  43.0ms | Adj:   22.8ms | Proc: 1.09ms
+[13:15:59] Test # 43 | Scale:  60% | Res:  648x 864 | ABS:  50.5ms | Adj:   19.0ms | Proc: 0.6ms
+[13:15:59] Test # 44 | Scale:  60% | Res:  648x 864 | ABS:  22.5ms | Adj:   20.6ms | Proc: 0.85ms
+[13:15:59] Test # 45 | Scale:  60% | Res:  648x 864 | ABS:  22.5ms | Adj:   37.7ms | Proc: 1.78ms
+[13:16:00] Test # 46 | Scale:  60% | Res:  648x 864 | ABS:  38.0ms | Adj:   26.4ms | Proc: 1.0ms
+[13:16:00] Test # 47 | Scale:  60% | Res:  648x 864 | ABS:  38.5ms | Adj:   40.8ms | Proc: 0.67ms
+[13:16:00] Test # 48 | Scale:  60% | Res:  648x 864 | ABS:  38.0ms | Adj:   18.5ms | Proc: 0.67ms
+[13:16:00] Test # 49 | Scale:  60% | Res:  648x 864 | ABS:  23.5ms | Adj:   20.0ms | Proc: 0.94ms
+[13:16:00] Test # 50 | Scale:  60% | Res:  648x 864 | ABS:  25.0ms | Adj:   32.9ms | Proc: 0.94ms
+[13:16:00] Test # 51 | Scale:  50% | Res:  540x 720 | ABS:  25.0ms | Adj:   35.7ms | Proc: 0.57ms
+[13:16:00] Test # 52 | Scale:  50% | Res:  540x 720 | ABS:  38.5ms | Adj:   39.6ms | Proc: 0.37ms
+[13:16:00] Test # 53 | Scale:  50% | Res:  540x 720 | ABS:  39.5ms | Adj:   46.9ms | Proc: 0.75ms
+[13:16:00] Test # 54 | Scale:  50% | Res:  540x 720 | ABS:  38.5ms | Adj:   50.3ms | Proc: 0.5ms
+[13:16:00] Test # 55 | Scale:  50% | Res:  540x 720 | ABS:  38.5ms | Adj:   43.0ms | Proc: 0.86ms
+[13:16:00] Test # 56 | Scale:  50% | Res:  540x 720 | ABS:  39.0ms | Adj:   53.5ms | Proc: 0.54ms
+[13:16:00] Test # 57 | Scale:  50% | Res:  540x 720 | ABS:  38.5ms | Adj:   62.9ms | Proc: 0.65ms
+[13:16:01] Test # 58 | Scale:  50% | Res:  540x 720 | ABS:  40.5ms | Adj:   93.0ms | Proc: 1.22ms
+[13:16:01] Test # 59 | Scale:  50% | Res:  540x 720 | ABS:  45.5ms | Adj:   49.4ms | Proc: 0.74ms
+[13:16:01] Test # 60 | Scale:  50% | Res:  540x 720 | ABS:  57.5ms | Adj:   57.9ms | Proc: 0.36ms
+[13:16:01] Test # 61 | Scale:  40% | Res:  432x 576 | ABS:  40.0ms | Adj:   28.3ms | Proc: 0.53ms
+[13:16:01] Test # 62 | Scale:  40% | Res:  432x 576 | ABS:  25.0ms | Adj:   27.5ms | Proc: 0.55ms
+[13:16:01] Test # 63 | Scale:  40% | Res:  432x 576 | ABS:  25.0ms | Adj:   43.8ms | Proc: 0.77ms
+[13:16:01] Test # 64 | Scale:  40% | Res:  432x 576 | ABS:  38.0ms | Adj:   38.1ms | Proc: 0.68ms
+[13:16:01] Test # 65 | Scale:  40% | Res:  432x 576 | ABS:  38.0ms | Adj:  121.5ms | Proc: 0.85ms
+[13:16:01] Test # 66 | Scale:  40% | Res:  432x 576 | ABS:  39.0ms | Adj:  121.5ms | Proc: 0.8ms
+[13:16:01] Test # 67 | Scale:  40% | Res:  432x 576 | ABS:  39.0ms | Adj:  106.6ms | Proc: 0.44ms
+[13:16:01] Test # 68 | Scale:  40% | Res:  432x 576 | ABS:  78.0ms | Adj:   80.0ms | Proc: 0.48ms
+[13:16:01] Test # 69 | Scale:  40% | Res:  432x 576 | ABS:  84.5ms | Adj:   76.2ms | Proc: 0.89ms
+[13:16:01] Test # 70 | Scale:  40% | Res:  432x 576 | ABS:  60.0ms | Adj:   70.0ms | Proc: 0.61ms
+[13:16:02] Test # 71 | Scale:  30% | Res:  324x 432 | ABS:  51.0ms | Adj:   68.0ms | Proc: 0.48ms
+[13:16:02] Test # 72 | Scale:  30% | Res:  324x 432 | ABS:  50.0ms | Adj:   40.2ms | Proc: 0.55ms
+[13:16:02] Test # 73 | Scale:  30% | Res:  324x 432 | ABS:  46.0ms | Adj:   79.9ms | Proc: 0.44ms
+[13:16:02] Test # 74 | Scale:  30% | Res:  324x 432 | ABS:  40.5ms | Adj:   88.2ms | Proc: 0.37ms
+[13:16:02] Test # 75 | Scale:  30% | Res:  324x 432 | ABS:  51.0ms | Adj:   76.8ms | Proc: 0.37ms
+[13:16:02] Test # 76 | Scale:  30% | Res:  324x 432 | ABS:  57.5ms | Adj:   52.3ms | Proc: 0.43ms
+[13:16:02] Test # 77 | Scale:  30% | Res:  324x 432 | ABS:  48.5ms | Adj:   47.5ms | Proc: 0.56ms
+[13:16:02] Test # 78 | Scale:  30% | Res:  324x 432 | ABS:  40.0ms | Adj:   35.0ms | Proc: 1.09ms
+[13:16:02] Test # 79 | Scale:  30% | Res:  324x 432 | ABS:  38.0ms | Adj:   38.0ms | Proc: 0.42ms
+[13:16:02] Test # 80 | Scale:  30% | Res:  324x 432 | ABS:  39.5ms | Adj:   42.5ms | Proc: 0.38ms
+[13:16:02] Test # 81 | Scale:  20% | Res:  216x 288 | ABS:  39.0ms | Adj:   42.2ms | Proc: 0.33ms
+[13:16:02] Test # 82 | Scale:  20% | Res:  216x 288 | ABS:  38.5ms | Adj:   40.8ms | Proc: 0.48ms
+[13:16:02] Test # 83 | Scale:  20% | Res:  216x 288 | ABS:  39.0ms | Adj:   67.5ms | Proc: 0.41ms
+[13:16:02] Test # 84 | Scale:  20% | Res:  216x 288 | ABS:  38.5ms | Adj:   49.8ms | Proc: 0.41ms
+[13:16:03] Test # 85 | Scale:  20% | Res:  216x 288 | ABS:  50.0ms | Adj:   63.9ms | Proc: 0.38ms
+[13:16:03] Test # 86 | Scale:  20% | Res:  216x 288 | ABS:  38.5ms | Adj:   61.3ms | Proc: 0.66ms
+[13:16:03] Test # 87 | Scale:  20% | Res:  216x 288 | ABS:  59.0ms | Adj:   54.0ms | Proc: 0.36ms
+[13:16:03] Test # 88 | Scale:  20% | Res:  216x 288 | ABS:  41.5ms | Adj:   31.7ms | Proc: 0.25ms
+[13:16:03] Test # 89 | Scale:  20% | Res:  216x 288 | ABS:  25.0ms | Adj:   37.2ms | Proc: 0.67ms
+[13:16:03] Test # 90 | Scale:  20% | Res:  216x 288 | ABS:  25.0ms | Adj:   15.5ms | Proc: 0.28ms
+[13:16:03] Test # 91 | Scale:  10% | Res:  108x 144 | ABS:  20.0ms | Adj:   29.2ms | Proc: 0.16ms
+[13:16:03] Test # 92 | Scale:  10% | Res:  108x 144 | ABS:  25.5ms | Adj:   31.6ms | Proc: 0.11ms
+[13:16:03] Test # 93 | Scale:  10% | Res:  108x 144 | ABS:  25.5ms | Adj:   36.0ms | Proc: 0.17ms
+[13:16:03] Test # 94 | Scale:  10% | Res:  108x 144 | ABS:  40.0ms | Adj:   43.9ms | Proc: 0.12ms
+[13:16:03] Test # 95 | Scale:  10% | Res:  108x 144 | ABS:  37.0ms | Adj:   42.6ms | Proc: 0.4ms
+[13:16:03] Test # 96 | Scale:  10% | Res:  108x 144 | ABS:  40.0ms | Adj:   34.1ms | Proc: 0.12ms
+[13:16:03] Test # 97 | Scale:  10% | Res:  108x 144 | ABS:  39.0ms | Adj:   34.7ms | Proc: 0.09ms
+[13:16:04] Test # 98 | Scale:  10% | Res:  108x 144 | ABS:  39.5ms | Adj:   28.2ms | Proc: 0.11ms
+[13:16:04] Test # 99 | Scale:  10% | Res:  108x 144 | ABS:  23.0ms | Adj:   22.9ms | Proc: 0.19ms
+[13:16:04] Test #100 | Scale:  10% | Res:  108x 144 | ABS:  20.0ms | Adj:   30.9ms | Proc: 0.17ms
