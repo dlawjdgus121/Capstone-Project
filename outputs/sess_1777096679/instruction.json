@@ -1,0 +1,104 @@
+[
+    {
+        "step": 0,
+        "title": "커넥터를 결합",
+        "desc": "금속 심선은 나 금속 선을 모터",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile7.png"
+    },
+    {
+        "step": 1,
+        "title": "부품 확인 및 준비",
+        "desc": "조립을 시작하기 전, 이미지에 표시된 모든 구성 부품(나무 판재, 바퀴, 모터, 배터리 케이스, 기어, 나사, 금속 축, 고무줄 등)이 모두 있는지 확인하고 준비합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile1.png"
+    },
+    {
+        "step": 2,
+        "title": "STEP 2: 베이스 브라켓 고정 및 설치 위치 확인",
+        "desc": "7mm 나사(Length 7mm coarse thread screw)를 사용하여 베이스의 네 모서리에 브라켓 부품을 고정합니다. 상세 사진과 같이 부품의 바깥쪽(outside)에서 안쪽(inside) 방향으로 나사를 조여 조립하세요. 중앙 하단의 빨간색 사각형으로 표시된 구역은 모터 모듈이 설치될 위치(Motor module installation location)입니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile2.png"
+    },
+    {
+        "step": 3,
+        "title": "구동 변환 프레임 측면 플레이트 조립",
+        "desc": "구동 변환 프레임 측면 플레이트(Drive conversion frame side plate)를 베이스 판의 홈에 맞추어 끼운 후, 나사를 사용하여 단단히 고정합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile3.png"
+    },
+    {
+        "step": 4,
+        "title": "오렌지 고정 링 설치 및 모터 모듈 위치 확인",
+        "desc": "차축의 네 군데에 주황색 고정 링(Orange retaining ring)을 끼워 고정하고, 빨간색 상자로 표시된 모터 모듈 설치 위치(Motor module installation location)를 확인합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile4.png"
+    },
+    {
+        "step": 5,
+        "title": "바퀴 및 차축 프레임 조립",
+        "desc": "차체 베이스의 앞부분과 뒷부분에 바퀴와 차축을 연결합니다. 차축을 차축 프레임(Axle frame)에 통과시켜 고정하고, 바퀴와 도르래, 부싱이 정확한 위치에 결합되도록 조립하여 전체적인 하부 구동축을 완성합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile5.png"
+    },
+    {
+        "step": 6,
+        "title": "모터와 건전지 케이스 연결",
+        "desc": "건전지 케이스에서 나온 빨간색 전선과 검은색 전선을 모터의 양쪽 단자에 각각 끼워 연결합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile6.png"
+    },
+    {
+        "step": 7,
+        "title": "기어 축 조립 및 모터 고정",
+        "desc": "1. 샤프트에 주황색 부싱 두 개와 흰색 큰 기어를 끼웁니다. 이때 샤프트의 끝에서부터 기어까지의 거리(Distance)가 20mm가 되도록 위치를 조정합니다. 2. 모터를 모터 고정용 A 보드(Motor clamp A board) 위에 배치한 후, 노란색 모터 클립(Motor clip)을 덮고 나사를 조여 고정합니다. 모터 축에는 웜 기어가 장착되어 있어야 합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile8.png"
+    },
+    {
+        "step": 8,
+        "title": "모터 클램프 보드 조립 및 샤프트 정렬",
+        "desc": "그림 ①과 같이 모터 클램프 B 보드를 나사로 고정하여 모터 뭉치를 조립합니다. 그림 ②를 참고하여 주황색 기어는 철심 샤프트(iron shaft)와 수평(Flush)이 되도록 위치를 맞추어 끼우고, 하단에는 2mm 부하 샤프트(Load shaft)를 연결하여 모터 클램프 A 보드와 B 보드 사이의 구동축을 완성합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile9.png"
+    },
+    {
+        "step": 9,
+        "title": "모터 모듈 및 배터리 박스 설치",
+        "desc": "이미지에 표시된 것과 같이 나무 판 위에 모터 모듈(Motor module)과 배터리 박스(Battery box)를 정확한 위치에 배치하고 나사를 사용하여 고정합니다. 이때 나이프 게이트 스위치(Knife gate switch)가 배터리 박스 하단의 지정된 위치에 오도록 주의하여 조립하십시오.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile10.png"
+    },
+    {
+        "step": 10,
+        "title": "STEP 10",
+        "desc": "노란색 원형 부품에 흰색 원형 패드를 부착한 뒤, 금속 샤프트를 중앙 구멍에 끼워 수직으로 세워 조립합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile11.png"
+    },
+    {
+        "step": 11,
+        "title": "STEP 11: 구동 변환 프레임 및 풀리 축 조립",
+        "desc": "주의: 흰색 풀리의 오목한 면이 위를 향하게 하세요! 흰색 풀리 쪽의 출력축 길이는 2cm, 반대편 바깥쪽 축의 길이는 1cm가 되도록 조절합니다. 축은 노란색 스윙 로드의 여섯 번째 축 구멍과 세 번째 축 구멍에 각각 끼워 넣습니다. 풀리 또는 주황색 고정 링과 노란색 스윙 로드 사이에는 1mm의 간격을 유지해야 합니다. 중앙부에는 전동 변환 프레임의 상판(Upper plate of transmission conversion frame)을 이미지와 같은 위치에 조립하십시오.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile12.png"
+    },
+    {
+        "step": 12,
+        "title": "주황색 기어 설치 및 기어 맞물림 확인",
+        "desc": "메인보드 하단의 샤프트에 주황색 기어를 설치합니다. 이때 기어와 보드 사이에 0.5mm 정도의 간격을 두어야 합니다. 또한 흰색 기어와 주황색 기어가 서로 정확하게 맞물리도록 위치를 조정하여 조립하세요.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile13.png"
+    },
+    {
+        "step": 13,
+        "title": "STEP 13",
+        "desc": "스위핑 바(sweeping bar)가 너무 높거나 낮으면, 흰색 풀리의 위치를 위아래로 조절하여 높이를 맞춰주세요.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile15.png"
+    },
+    {
+        "step": 14,
+        "title": "동력 전달 장치 및 벨트 조립",
+        "desc": "모터의 기어와 구동축의 기어가 잘 맞물리도록 고정하고, 풀리에 고무줄 벨트를 걸어 바퀴와 연결하여 동력 전달 구조를 완성합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile16.png"
+    },
+    {
+        "step": 15,
+        "title": "헤딩 샤프트 조립",
+        "desc": "헤딩 샤프트(Heading shaft)를 풀리의 큰 구멍(big hole)에 삽입하여 조립합니다. 이미지 2번과 같이 작은 구멍(Small hole) 옆의 큰 구멍에 샤프트를 정확히 끼워주세요.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile18.png"
+    },
+    {
+        "step": 16,
+        "title": "고무줄 연결 및 최종 조립 확인",
+        "desc": "이미지와 같이 상단의 긴 노란색 프레임 양쪽 끝에 위치한 풀리에 고무줄을 걸어 연결합니다. 또한, 본체의 모터 풀리와 바퀴 축의 풀리 사이에도 고무줄을 걸어 동력이 전달될 수 있도록 전체적인 조립 상태를 확인하며 마무리합니다.",
+        "image_url": "/outputs/sess_1777096679/pdf_parts/J-50 동력전달 청소자동차_images/imageFile17.png"
+    }
+]

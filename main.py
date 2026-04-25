@@ -96,35 +96,37 @@ async def coaching_loop():
         else:
             await asyncio.sleep(1.0)
 
-# --- [PDF 조각 분석: OCR 데이터 강제 매핑 및 생성형 복원] ---
+# --- [PDF 조각 분석: 한국어 강제 출력 및 정밀 필터링] ---
 async def analyze_with_context(client, img_path, page_context_text):
-    """이미지 자체 OCR과 텍스트 컨텍스트를 결합하여 완벽한 지시문을 추출합니다."""
+    """이미지 조각을 분석하여 한국어로 번역된 조립 단계를 추출합니다."""
     try:
         with Image.open(img_path) as img:
             img_rgb = img.convert("RGB")
-            img_rgb.thumbnail((1200, 1200)) # OCR 품질을 위해 해상도 상향
+            img_rgb.thumbnail((1200, 1200))
             buf = io.BytesIO()
             img_rgb.save(buf, format="JPEG", quality=90)
             img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
-        # 🌟 지시문 누락 방지를 위한 초강력 프롬프트
+        # 🌟 한국어 출력을 강제하고 영어를 번역하도록 지시하는 프롬프트
         prompt = f"""
-        당신은 복잡한 조립 매뉴얼을 완벽하게 디지털화하는 전문가입니다.
-        입력된 [이미지 조각]과 [페이지 전체 텍스트 데이터]를 대조하여 가장 풍부한 지시문을 반환하세요.
+        당신은 조립 매뉴얼 정밀 디지털화 및 번역 전문가입니다. 
+        매뉴얼 내용이 영어로 되어 있더라도, 결과는 반드시 '자연스러운 한국어'로 작성하세요.
 
-        [페이지 전체 텍스트 데이터]:
+        [판단 지침]
+        1. **언어 규칙 (필독)**: 
+           - 'title'과 'desc'는 반드시 한국어로 작성하세요. 
+           - 영문 매뉴얼인 경우, 기술적인 용어를 고려하여 한국 사용자가 이해하기 쉽게 번역하세요.
+        2. **is_step 판별**:
+           - 구체적인 조립 동작, 부품 확인, 준비물 단계만 'is_step': true로 하세요.
+           - 브랜드 로고(Teaching STEAM), 섹션 제목만 있는 조각, 주의사항 없는 일반 안내문은 'is_step': false로 하세요.
+        3. **내용 추출**:
+           - 이미지 내 텍스트와 아래 제공된 [전체 페이지 텍스트]를 대조하여 가장 정확한 설명을 생성하세요.
+
+        [전체 페이지 텍스트 문맥]:
         {page_context_text}
 
-        [분석 지침]:
-        1. **지시문(desc) 추출 규칙 (필독)**:
-           - 제공된 [페이지 전체 텍스트 데이터]에서 이 단계와 관련된 한국어 설명을 찾아 '토씨 하나 틀리지 말고 그대로' 가져오세요.
-           - 만약 텍스트 데이터에 설명이 부족하다면, **[이미지 조각]을 직접 정밀 OCR 분석**하여 이미지에 적힌 모든 한국어 문장을 빠짐없이 추출하세요.
-           - "STEP 1" 같은 짧은 문구만 적는 것은 실패입니다. 이미지 내의 모든 지시문이나 텍스트 데이터의 상세 설명을 우선순위로 두세요.
-        2. **텍스트가 없는 경우**: 이미지 내에 글자가 전혀 없다면, 시각적 동작(예: 화살표 방향, 부품 위치)을 해석하여 한국어로 친절한 지시문을 직접 작성하세요.
-        3. **단계 번호**: 이미지 속의 번호를 추출하여 정수로 반환하세요.
-
-        반드시 아래 JSON 형식으로만 응답하세요:
-        {{"step_number": int, "title": "string", "desc": "string", "is_step": bool}}
+        반드시 아래 JSON 형식으로 응답하세요:
+        {{"step_number": int, "title": "한국어 제목", "desc": "한국어 상세 설명", "is_step": bool}}
         """
         
         payload = {
@@ -133,20 +135,32 @@ async def analyze_with_context(client, img_path, page_context_text):
         }
         res = await client.post(GEMINI_URL, json=payload, timeout=30.0)
         if res.status_code == 200:
-            data = json.loads(res.json()['candidates'][0]['content']['parts'][0]['text'])
+            text_res = res.json()['candidates'][0]['content']['parts'][0]['text']
+            data = json.loads(text_res)
             if isinstance(data, list): data = data[0]
             
-            # desc가 너무 짧으면 context의 전체 텍스트 중 일부를 백업으로 사용 시도
-            if len(data.get("desc", "")) < 5 and page_context_text:
-                print(f"⚠️ [WARN] {os.path.basename(img_path)}의 지시문이 너무 짧아 컨텍스트 보강을 시도합니다.")
+            if not data.get("is_step", False):
+                return None
+            
+            title_val = data.get("title", "").lower()
+            desc_val = data.get("desc", "").lower()
+            
+            # 오인식 키워드 차단
+            invalid_keywords = ["안내", "공지", "steam", "teaching", "copyright", "정렬", "주의하여", "문의"]
+            valid_action_keywords = ["나사", "결합", "연결", "끼웁니다", "조입니다", "부품", "step", "수량", "설치", "고정"]
+            
+            has_invalid = any(k in title_val or k in desc_val for k in invalid_keywords)
+            has_valid = any(k in title_val or k in desc_val for k in valid_action_keywords)
+            
+            if has_invalid and not (has_valid and len(desc_val) > 25):
+                return None
 
-            if data.get("is_step", True):
-                return {
-                    "step": data.get("step_number"),
-                    "title": data.get("title", "조립 단계"),
-                    "desc": data.get("desc", "이미지 내용을 확인해주세요."),
-                    "image_url": f"/outputs/{os.path.relpath(img_path, OUTPUT_DIR)}".replace("\\", "/")
-                }
+            return {
+                "step": data.get("step_number"),
+                "title": data.get("title", "조립 단계"),
+                "desc": data.get("desc", "이미지 내용을 확인해주세요."),
+                "image_url": f"/outputs/{os.path.relpath(img_path, OUTPUT_DIR)}".replace("\\", "/")
+            }
     except Exception as e:
         print(f"🚨 분석 에러 ({os.path.basename(img_path)}): {e}")
     return None
@@ -161,7 +175,11 @@ async def detect_and_crop_image(client, img_path, base_idx):
             img_rgb.save(buf, format="JPEG", quality=85)
             img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
-        prompt = "이미지에서 조립 단계 영역을 탐지하고 상세 지시문을 추출해라. 글자가 없으면 동작을 해석해라. JSON: {\"steps\": [{\"step_number\": int, \"box_2d\": [ymin, xmin, ymax, xmax], \"title\": \"string\", \"desc\": \"string\"}]}"
+        prompt = """
+        이미지에서 실제 조립 단계 영역만 탐지하세요. 
+        결과(title, desc)는 반드시 한국어로 작성하고, 영문은 번역하세요.
+        JSON: {"steps": [{"step_number": int, "box_2d": [ymin, xmin, ymax, xmax], "title": "한국어 제목", "desc": "한국어 설명", "is_step": bool}]}
+        """
         payload = {
             "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}]}],
             "generationConfig": {"responseMimeType": "application/json"}
@@ -174,6 +192,8 @@ async def detect_and_crop_image(client, img_path, base_idx):
             steps = []
             with Image.open(img_path) as full_img:
                 for idx, s in enumerate(raw_steps):
+                    if not s.get("is_step", True): continue
+                    
                     box = s.get("box_2d")
                     if not box: continue
                     left, top, right, bottom = box[1]*orig_w/1000, box[0]*orig_h/1000, box[3]*orig_w/1000, box[2]*orig_h/1000
@@ -216,7 +236,6 @@ async def handle_manual(files: List[UploadFile] = File(...)):
                 print(f"📄 [SYSTEM] PDF 변환 시작: {f.filename}")
                 opendataloader_pdf.convert(input_path=[file_path], output_dir=proc_dir, format="json")
                 
-                # 🌟 [개선] OCR 텍스트 추출 정확도 향상
                 page_texts = {} 
                 img_to_page = {} 
                 
@@ -228,7 +247,6 @@ async def handle_manual(files: List[UploadFile] = File(...)):
                             items = data if isinstance(data, list) else [data]
                             for item in items:
                                 p_num = item.get('page_num', 0)
-                                # 텍스트 데이터 누락 방지: 가능한 모든 필드 수집
                                 txt = item.get('text') or item.get('content') or item.get('ocr_text') or ""
                                 page_texts[p_num] = page_texts.get(p_num, "") + "\n" + txt.strip()
                                 
@@ -258,7 +276,6 @@ async def handle_manual(files: List[UploadFile] = File(...)):
                 img_steps = await detect_and_crop_image(client, file_path, len(all_steps))
                 all_steps.extend(img_steps)
                 
-    # 중복 제거 및 정렬
     unique_steps = []
     seen_urls = set()
     for s in all_steps:
@@ -266,14 +283,37 @@ async def handle_manual(files: List[UploadFile] = File(...)):
             unique_steps.append(s)
             seen_urls.add(s['image_url'])
             
-    unique_steps.sort(key=lambda x: int(x.get('step') or 0) if str(x.get('step')).isdigit() else 999)
+    def get_step_num(x):
+        val = x.get('step')
+        if val is None or not str(val).isdigit(): return 999
+        return int(val)
+
+    unique_steps.sort(key=get_step_num)
     
+    final_filtered_steps = []
+    for i, s in enumerate(unique_steps):
+        is_boundary = (i == 0 or i == len(unique_steps) - 1)
+        title = s.get("title", "").lower()
+        desc = s.get("desc", "").lower()
+        
+        if is_boundary:
+            if any(k in title or k in desc for k in ["안내", "steam", "teaching", "copyright"]):
+                if get_step_num(s) == 999 or get_step_num(s) == 0:
+                    continue
+        
+        final_filtered_steps.append(s)
+
     with open(os.path.join(job_dir, "instruction.json"), "w", encoding="utf-8") as f:
-        json.dump(unique_steps, f, ensure_ascii=False, indent=4)
+        json.dump(final_filtered_steps, f, ensure_ascii=False, indent=4)
     
-    state.update({"manual_steps": unique_steps, "is_analyzed": True, "analysis_time": round(time.time() - start_time, 2)})
-    print(f"✅ [SUCCESS] 분석 완료. {len(unique_steps)}개 단계 추출됨.")
-    return {"status": "success", "steps": unique_steps}
+    state.update({
+        "manual_steps": final_filtered_steps, 
+        "is_analyzed": True, 
+        "analysis_time": round(time.time() - start_time, 2),
+        "current_step_idx": 0
+    })
+    print(f"✅ [SUCCESS] 분석 완료. 모든 가이드가 한국어로 생성되었습니다.")
+    return {"status": "success", "steps": final_filtered_steps}
 
 @app.get("/status")
 async def get_status():
