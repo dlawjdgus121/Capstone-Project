@@ -8,6 +8,7 @@ import httpx
 import uvicorn
 import glob
 import re
+import subprocess
 from typing import List
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,8 +59,56 @@ state = {
     "ai_response": "대기 중...",
     "is_analyzed": False,
     "analysis_time": 0.0,
-    "is_coaching_active": False
+    "is_coaching_active": False,
+    # 강제 이동 잠금: True이면 coaching_loop가 current_step_idx를 자동으로 바꾸지 않음
+    "step_locked": False,
+    "progress_step": "upload"  # upload | render | analyze | done
 }
+
+# ─── 세션 저장/복원 ──────────────────────────────────────────────────────────
+SESSION_FILE = os.path.join(OUTPUT_DIR, "last_session.json")
+
+def save_session():
+    """현재 단계 인덱스와 매뉴얼 경로를 디스크에 저장."""
+    if not state["is_analyzed"] or not state["manual_steps"]:
+        return
+    try:
+        payload = {
+            "current_step_idx": state["current_step_idx"],
+            "manual_steps":     state["manual_steps"],
+            "analysis_time":    state["analysis_time"],
+            "step_locked":      state["step_locked"],
+        }
+        with open(SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ 세션 저장 실패: {e}")
+
+def load_session() -> bool:
+    """서버 시작 시 이전 세션을 복원. 성공하면 True 반환."""
+    if not os.path.exists(SESSION_FILE):
+        return False
+    try:
+        with open(SESSION_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        steps = payload.get("manual_steps", [])
+        if not steps:
+            return False
+        idx = int(payload.get("current_step_idx", 0))
+        idx = max(0, min(idx, len(steps) - 1))
+        state.update({
+            "manual_steps":     steps,
+            "current_step_idx": idx,
+            "analysis_time":    payload.get("analysis_time", 0),
+            "step_locked":      payload.get("step_locked", False),
+            "is_analyzed":      True,
+            "progress_step":    "done",
+        })
+        print(f"✅ [SESSION] 이전 세션 복원 완료 — STEP {idx + 1}/{len(steps)} 부터 재개")
+        return True
+    except Exception as e:
+        print(f"⚠️ 세션 복원 실패: {e}")
+        return False
 
 # --- [실시간 코칭 인퍼런스 서버 통신] ---
 async def call_runpod_inference(manual_img_path, camera_frame_bytes):
@@ -92,133 +141,234 @@ async def coaching_loop():
                 prediction = await call_runpod_inference(current_step["image_url"], state["latest_frame"])
                 if prediction:
                     state["ai_response"] = f"[{prediction.get('result', 'UNKNOWN')}] {prediction.get('reason', '분석 중...')}"
+                    # step_locked가 아닐 때만 AI가 자동으로 단계를 올림
+                    if not state["step_locked"]:
+                        if prediction.get("result") == "PASS" and idx + 1 < len(state["manual_steps"]):
+                            state["current_step_idx"] = idx + 1
+                            save_session()  # AI 자동 진행도 저장
             await asyncio.sleep(3.0)
         else:
             await asyncio.sleep(1.0)
 
 # --- [PDF 조각 분석: 한국어 강제 출력 및 정밀 필터링] ---
-async def analyze_with_context(client, img_path, page_context_text):
-    """이미지 조각을 분석하여 한국어로 번역된 조립 단계를 추출합니다."""
+async def render_pdf_pages(pdf_path: str, out_dir: str, dpi: int = 200) -> list[str]:
+    """pdftoppm으로 PDF 각 페이지를 JPEG 이미지로 변환 후 경로 목록 반환."""
+    prefix = os.path.join(out_dir, "page")
+    result = subprocess.run(
+        ["pdftoppm", "-jpeg", "-r", str(dpi), pdf_path, prefix],
+        capture_output=True
+    )
+    if result.returncode != 0:
+        print(f"🚨 pdftoppm 오류: {result.stderr.decode()}")
+        return []
+    pages = sorted(glob.glob(f"{prefix}-*.jpg"))
+    print(f"📄 [SYSTEM] PDF {len(pages)}페이지 렌더링 완료")
+    return pages
+
+
+async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: str) -> list[dict]:
+    """
+    페이지 전체 이미지를 Gemini에 넘겨 모든 STEP을 한 번에 추출.
+    - STEP 이미지는 bounding box로 크롭해 저장
+    - desc는 이미지 아래 인쇄된 한국어 지시문 원문 그대로
+    """
     try:
-        with Image.open(img_path) as img:
+        with Image.open(page_img_path) as img:
+            orig_w, orig_h = img.size
             img_rgb = img.convert("RGB")
-            img_rgb.thumbnail((1200, 1200))
             buf = io.BytesIO()
-            img_rgb.save(buf, format="JPEG", quality=90)
-            img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+            img_rgb.save(buf, format="JPEG", quality=88)
+            img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-        # 🌟 한국어 출력을 강제하고 영어를 번역하도록 지시하는 프롬프트
-        prompt = f"""
-        당신은 조립 매뉴얼 정밀 디지털화 및 번역 전문가입니다. 
-        매뉴얼 내용이 영어로 되어 있더라도, 결과는 반드시 '자연스러운 한국어'로 작성하세요.
+        prompt = """
+당신은 조립 매뉴얼 디지털화 전문가입니다.
+이 이미지는 조립 매뉴얼의 한 페이지입니다.
 
-        [판단 지침]
-        1. **언어 규칙 (필독)**: 
-           - 'title'과 'desc'는 반드시 한국어로 작성하세요. 
-           - 영문 매뉴얼인 경우, 기술적인 용어를 고려하여 한국 사용자가 이해하기 쉽게 번역하세요.
-        2. **is_step 판별**:
-           - 구체적인 조립 동작, 부품 확인, 준비물 단계만 'is_step': true로 하세요.
-           - 브랜드 로고(Teaching STEAM), 섹션 제목만 있는 조각, 주의사항 없는 일반 안내문은 'is_step': false로 하세요.
-        3. **내용 추출**:
-           - 이미지 내 텍스트와 아래 제공된 [전체 페이지 텍스트]를 대조하여 가장 정확한 설명을 생성하세요.
+[임무]
+1. 페이지에 있는 모든 STEP을 찾아 아래 JSON 배열로 반환하세요.
+2. 각 STEP에 대해:
+   - step_number: STEP 번호 (정수)
+   - title: STEP 이미지 내부 또는 바로 위에 표시된 "STEP N" 레이블 텍스트 그대로
+   - desc: STEP 이미지 바로 아래에 인쇄된 지시문 텍스트를 한 글자도 빠짐없이 그대로 복사하세요.
+           반드시 한국어로 된 텍스트를 우선 사용하고, 한국어가 없으면 영문 원문 그대로 쓰세요.
+           절대로 요약·번역·해석·재작성하지 마세요.
+           줄바꿈은 문단이 완전히 바뀔 때만 사용하고, 한 문장 안에서는 줄바꿈하지 마세요.
+   - box_2d: STEP 이미지(사진 박스)의 바운딩 박스 [ymin, xmin, ymax, xmax] (0~1000 정수 스케일)
+             지시문 텍스트 영역은 포함하지 말고, 이미지(사진) 영역만 크롭하세요.
 
-        [전체 페이지 텍스트 문맥]:
-        {page_context_text}
+[중요 규칙]
+- Teaching STEAM 로고, 페이지 배경, 브랜드 마크는 STEP이 아닙니다. 무시하세요.
+- 이미지가 없고 텍스트만 있는 영역도 STEP이 아닙니다.
+- desc가 비어있으면 해당 STEP을 포함하지 마세요.
 
-        반드시 아래 JSON 형식으로 응답하세요:
-        {{"step_number": int, "title": "한국어 제목", "desc": "한국어 상세 설명", "is_step": bool}}
-        """
-        
+반드시 아래 JSON 형식으로만 응답하세요 (다른 텍스트 없음):
+{"steps": [{"step_number": int, "title": "STEP N", "desc": "원문 지시문 그대로", "box_2d": [ymin, xmin, ymax, xmax]}]}
+"""
         payload = {
-            "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}]}],
+            "contents": [{"parts": [
+                {"text": prompt},
+                {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}
+            ]}],
             "generationConfig": {"responseMimeType": "application/json"}
         }
-        res = await client.post(GEMINI_URL, json=payload, timeout=30.0)
-        if res.status_code == 200:
-            text_res = res.json()['candidates'][0]['content']['parts'][0]['text']
-            data = json.loads(text_res)
-            if isinstance(data, list): data = data[0]
-            
-            if not data.get("is_step", False):
-                return None
-            
-            title_val = data.get("title", "").lower()
-            desc_val = data.get("desc", "").lower()
-            
-            # 오인식 키워드 차단
-            invalid_keywords = ["안내", "공지", "steam", "teaching", "copyright", "정렬", "주의하여", "문의"]
-            valid_action_keywords = ["나사", "결합", "연결", "끼웁니다", "조입니다", "부품", "step", "수량", "설치", "고정"]
-            
-            has_invalid = any(k in title_val or k in desc_val for k in invalid_keywords)
-            has_valid = any(k in title_val or k in desc_val for k in valid_action_keywords)
-            
-            if has_invalid and not (has_valid and len(desc_val) > 25):
-                return None
+        res = await client.post(GEMINI_URL, json=payload, timeout=60.0)
+        if res.status_code != 200:
+            print(f"🚨 Gemini 오류 {res.status_code}: {res.text[:200]}")
+            return []
 
-            return {
-                "step": data.get("step_number"),
-                "title": data.get("title", "조립 단계"),
-                "desc": data.get("desc", "이미지 내용을 확인해주세요."),
-                "image_url": f"/outputs/{os.path.relpath(img_path, OUTPUT_DIR)}".replace("\\", "/")
-            }
+        raw = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(raw)
+        raw_steps = parsed.get("steps", [])
+
+        steps = []
+        with Image.open(page_img_path) as full_img:
+            for s in raw_steps:
+                box = s.get("box_2d")
+                desc = s.get("desc", "").strip()
+                if not box or not desc:
+                    continue
+
+                # 0~1000 스케일 → 픽셀 좌표
+                ymin, xmin, ymax, xmax = box
+                left   = int(xmin * orig_w / 1000)
+                top    = int(ymin * orig_h / 1000)
+                right  = int(xmax * orig_w / 1000)
+                bottom = int(ymax * orig_h / 1000)
+
+                # 범위 보정
+                left, top     = max(0, left),   max(0, top)
+                right, bottom = min(orig_w, right), min(orig_h, bottom)
+                if right <= left or bottom <= top:
+                    continue
+
+                crop = full_img.crop((left, top, right, bottom))
+                step_num = s.get("step_number", 0)
+                c_path = os.path.join(job_dir, f"step_p{page_num}_{step_num}.jpg")
+                crop.convert("RGB").save(c_path, "JPEG", quality=92)
+
+                steps.append({
+                    "step": step_num,
+                    "title": s.get("title", f"STEP {step_num}"),
+                    "desc": desc,
+                    "image_url": f"/outputs/{os.path.relpath(c_path, OUTPUT_DIR)}".replace("\\", "/")
+                })
+                print(f"  ✅ STEP {step_num} 추출 완료: {desc[:40]}...")
+
+        return steps
+
     except Exception as e:
-        print(f"🚨 분석 에러 ({os.path.basename(img_path)}): {e}")
-    return None
+        print(f"🚨 페이지 분석 에러 (page {page_num}): {e}")
+        return []
+
 
 async def detect_and_crop_image(client, img_path, base_idx):
+    """
+    이미지 파일(PNG/JPG 등) 전용 처리.
+    - 텍스트 지시문이 없는 다이어그램/일러스트도 처리
+    - Gemini가 각 STEP의 시각적 동작을 한국어로 직접 설명
+    """
     try:
         with Image.open(img_path) as img:
             orig_w, orig_h = img.size
             img_rgb = img.convert("RGB")
-            img_rgb.thumbnail((1024, 1024))
+            img_rgb.thumbnail((1600, 1600))
             buf = io.BytesIO()
-            img_rgb.save(buf, format="JPEG", quality=85)
-            img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+            img_rgb.save(buf, format="JPEG", quality=90)
+            img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         prompt = """
-        이미지에서 실제 조립 단계 영역만 탐지하세요. 
-        결과(title, desc)는 반드시 한국어로 작성하고, 영문은 번역하세요.
-        JSON: {"steps": [{"step_number": int, "box_2d": [ymin, xmin, ymax, xmax], "title": "한국어 제목", "desc": "한국어 설명", "is_step": bool}]}
-        """
+당신은 조립/공예 매뉴얼 분석 전문가입니다.
+이 이미지는 여러 STEP이 격자 또는 순서대로 나열된 매뉴얼 이미지입니다.
+
+[임무]
+이미지에서 각 STEP을 찾아 아래 JSON으로 반환하세요.
+
+각 STEP에 대해:
+- step_number: 이미지에 표시된 번호 (원 안 숫자, 모서리 레이블 등). 없으면 순서대로 1부터.
+- title: 이미지에 표시된 STEP 레이블 텍스트 그대로. 없으면 "STEP N" 형식으로.
+- desc: 아래 두 경우 중 하나로 작성:
+    (A) 이미지에 텍스트 지시문이 있으면 → 원문 그대로 한국어로 복사
+    (B) 텍스트 지시문이 없으면 → 해당 STEP의 그림을 보고 수행해야 할 동작을 
+        한국어로 구체적으로 설명 (예: "종이를 대각선으로 접어 삼각형을 만듭니다.")
+        화살표, 점선, 접힘 방향 등 시각적 단서를 반드시 반영하세요.
+        한 문장 안에서 줄바꿈하지 말고 자연스러운 문장으로 이어서 쓰세요.
+- box_2d: 해당 STEP 그림 영역의 바운딩 박스 [ymin, xmin, ymax, xmax] (0~1000 정수 스케일)
+
+[규칙]
+- 배경, 로고, 제목 텍스트만 있는 영역은 STEP이 아닙니다.
+- 모든 STEP을 빠짐없이 추출하세요.
+- box_2d는 정확하게 해당 STEP 그림만 포함하세요 (여백 최소화).
+
+반드시 아래 JSON 형식으로만 응답하세요:
+{"steps": [{"step_number": int, "title": "STEP N", "desc": "한국어 설명", "box_2d": [ymin, xmin, ymax, xmax]}]}
+"""
         payload = {
-            "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}]}],
+            "contents": [{"parts": [
+                {"text": prompt},
+                {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}
+            ]}],
             "generationConfig": {"responseMimeType": "application/json"}
         }
         res = await client.post(GEMINI_URL, json=payload, timeout=60.0)
-        if res.status_code == 200:
-            raw_res = json.loads(res.json()['candidates'][0]['content']['parts'][0]['text'])
-            raw_steps = raw_res.get("steps", [])
-            
-            steps = []
-            with Image.open(img_path) as full_img:
-                for idx, s in enumerate(raw_steps):
-                    if not s.get("is_step", True): continue
-                    
-                    box = s.get("box_2d")
-                    if not box: continue
-                    left, top, right, bottom = box[1]*orig_w/1000, box[0]*orig_h/1000, box[3]*orig_w/1000, box[2]*orig_h/1000
-                    crop = full_img.crop((left, top, right, bottom))
-                    c_path = os.path.join(os.path.dirname(img_path), f"crop_{int(time.time())}_{idx}.jpg")
-                    crop.convert("RGB").save(c_path, "JPEG", quality=90)
-                    steps.append({
-                        "step": s.get("step_number") or (base_idx + idx + 1),
-                        "title": s.get("title", f"단계"),
-                        "desc": s.get("desc", ""),
-                        "image_url": f"/outputs/{os.path.relpath(c_path, OUTPUT_DIR)}".replace("\\", "/")
-                    })
-            return steps
-    except: pass
+        if res.status_code != 200:
+            print(f"🚨 Gemini 이미지 분석 오류 {res.status_code}")
+            return []
+
+        raw = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(raw)
+        raw_steps = parsed.get("steps", [])
+
+        job_dir = os.path.dirname(img_path)
+        steps = []
+        with Image.open(img_path) as full_img:
+            orig_w, orig_h = full_img.size
+            for s in raw_steps:
+                box  = s.get("box_2d")
+                desc = s.get("desc", "").strip()
+                if not box or not desc:
+                    continue
+
+                ymin, xmin, ymax, xmax = box
+                left   = max(0,      int(xmin * orig_w / 1000))
+                top    = max(0,      int(ymin * orig_h / 1000))
+                right  = min(orig_w, int(xmax * orig_w / 1000))
+                bottom = min(orig_h, int(ymax * orig_h / 1000))
+                if right <= left or bottom <= top:
+                    continue
+
+                crop     = full_img.crop((left, top, right, bottom))
+                step_num = s.get("step_number") or (base_idx + len(steps) + 1)
+                c_path   = os.path.join(job_dir, f"img_step_{step_num}_{int(time.time()*1000)}.jpg")
+                crop.convert("RGB").save(c_path, "JPEG", quality=92)
+
+                steps.append({
+                    "step":      step_num,
+                    "title":     s.get("title", f"STEP {step_num}"),
+                    "desc":      desc,
+                    "image_url": f"/outputs/{os.path.relpath(c_path, OUTPUT_DIR)}".replace("\\", "/")
+                })
+                print(f"  ✅ IMG STEP {step_num}: {desc[:50]}...")
+
+        return steps
+
+    except Exception as e:
+        print(f"🚨 이미지 분석 에러: {e}")
     return []
+
 
 # --- [FastAPI 라우팅] ---
 
 @app.on_event("startup")
-async def startup(): asyncio.create_task(coaching_loop())
+async def startup():
+    load_session()
+    asyncio.create_task(coaching_loop())
 
 @app.post("/process-manual")
 async def handle_manual(files: List[UploadFile] = File(...)):
     start_time = time.time()
     state["is_analyzed"] = False
+    state["step_locked"] = False
+    state["progress_step"] = "upload"
     sess_id = f"sess_{int(start_time)}"
     job_dir = os.path.join(OUTPUT_DIR, sess_id)
     os.makedirs(job_dir, exist_ok=True)
@@ -231,46 +381,33 @@ async def handle_manual(files: List[UploadFile] = File(...)):
             
             ext = f.filename.lower()
             if ext.endswith(".pdf"):
-                proc_dir = os.path.join(job_dir, "pdf_parts")
-                os.makedirs(proc_dir, exist_ok=True)
-                print(f"📄 [SYSTEM] PDF 변환 시작: {f.filename}")
-                opendataloader_pdf.convert(input_path=[file_path], output_dir=proc_dir, format="json")
-                
-                page_texts = {} 
-                img_to_page = {} 
-                
-                json_files = glob.glob(os.path.join(proc_dir, "**", "*.json"), recursive=True)
-                for jf in json_files:
-                    try:
-                        with open(jf, 'r', encoding='utf-8') as j:
-                            data = json.load(j)
-                            items = data if isinstance(data, list) else [data]
-                            for item in items:
-                                p_num = item.get('page_num', 0)
-                                txt = item.get('text') or item.get('content') or item.get('ocr_text') or ""
-                                page_texts[p_num] = page_texts.get(p_num, "") + "\n" + txt.strip()
-                                
-                                img_key = item.get('image_path') or item.get('filename') or item.get('image')
-                                if img_key:
-                                    img_to_page[os.path.basename(img_key)] = p_num
-                    except Exception as e:
-                        print(f"⚠️ [DEBUG] JSON 파싱 에러: {e}")
+                pages_dir = os.path.join(job_dir, "pages")
+                os.makedirs(pages_dir, exist_ok=True)
+                print(f"📄 [SYSTEM] PDF 렌더링 시작: {f.filename}")
+                state["progress_step"] = "render"
 
-                fragments = glob.glob(os.path.join(proc_dir, "**", "*.png"), recursive=True) + \
-                            glob.glob(os.path.join(proc_dir, "**", "*.jpg"), recursive=True)
-                
-                print(f"🔍 [SYSTEM] {len(fragments)}개의 이미지 조각 분석 시작...")
-                
-                tasks = []
-                for fp in fragments:
-                    fname = os.path.basename(fp)
-                    p_num = img_to_page.get(fname, 0)
-                    context = page_texts.get(p_num, "")
-                    tasks.append(analyze_with_context(client, fp, context))
-                
-                results = await asyncio.gather(*tasks)
-                for res in results:
-                    if res: all_steps.append(res)
+                # pdftoppm: blocking I/O → executor로 비동기 실행
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        ["pdftoppm", "-jpeg", "-r", "200", file_path,
+                         os.path.join(pages_dir, "page")],
+                        capture_output=True
+                    )
+                )
+                page_imgs = sorted(glob.glob(os.path.join(pages_dir, "page-*.jpg")))
+                state["progress_step"] = "analyze"
+                print(f"🖼️ [SYSTEM] {len(page_imgs)}페이지 → Gemini 병렬 분석 시작")
+
+                # 모든 페이지를 동시에 Gemini 호출 (순차 → 병렬)
+                tasks = [
+                    analyze_pdf_page(client, p_img, p_idx + 1, job_dir)
+                    for p_idx, p_img in enumerate(page_imgs)
+                ]
+                page_results = await asyncio.gather(*tasks)
+                for page_steps in page_results:
+                    all_steps.extend(page_steps)
                 
             elif ext.endswith((".png", ".jpg", ".jpeg")):
                 img_steps = await detect_and_crop_image(client, file_path, len(all_steps))
@@ -312,12 +449,39 @@ async def handle_manual(files: List[UploadFile] = File(...)):
         "analysis_time": round(time.time() - start_time, 2),
         "current_step_idx": 0
     })
-    print(f"✅ [SUCCESS] 분석 완료. 모든 가이드가 한국어로 생성되었습니다.")
+    state["progress_step"] = "done"
+    save_session()
+    print(f"✅ [SUCCESS] 분석 완료.")
     return {"status": "success", "steps": final_filtered_steps}
 
 @app.get("/status")
 async def get_status():
     return {**state, "has_frame": state["latest_frame"] is not None}
+
+# ─── 강제 단계 이동 엔드포인트 ────────────────────────────────────────────────
+@app.post("/set-step")
+async def set_step(body: dict):
+    """
+    프론트엔드에서 강제로 AI Focus(current_step_idx)를 이동시킵니다.
+    body: { "idx": int, "locked": bool }
+      - idx: 이동할 단계 인덱스
+      - locked: True면 AI 자동 추적을 일시 중단, False면 재개
+    """
+    total = len(state["manual_steps"])
+    if total == 0:
+        return {"status": "error", "message": "매뉴얼이 로드되지 않았습니다."}
+
+    idx = int(body.get("idx", state["current_step_idx"]))
+    locked = bool(body.get("locked", True))
+
+    # 범위 클램프
+    idx = max(0, min(idx, total - 1))
+
+    state["current_step_idx"] = idx
+    state["step_locked"] = locked
+    save_session()  # 수동 이동도 즉시 저장
+    print(f"🔧 [MANUAL] AI Focus 강제 이동 → step {idx}, locked={locked}")
+    return {"status": "ok", "current_step_idx": idx, "step_locked": locked}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

@@ -1,0 +1,141 @@
+{
+  "file name" : "J-50 동력전달 청소자동차.pdf",
+  "number of pages" : 3,
+  "author" : null,
+  "title" : null,
+  "creation date" : null,
+  "modification date" : null,
+  "kids" : [ {
+    "type" : "image",
+    "id" : 8,
+    "page number" : 1,
+    "bounding box" : [ 50.165, 645.822, 302.291, 815.428 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile1.png"
+  }, {
+    "type" : "image",
+    "id" : 9,
+    "page number" : 1,
+    "bounding box" : [ 357.617, 643.319, 612.096, 815.428 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile2.png"
+  }, {
+    "type" : "image",
+    "id" : 10,
+    "page number" : 1,
+    "bounding box" : [ 50.916, 407.554, 303.445, 576.936 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile3.png"
+  }, {
+    "type" : "image",
+    "id" : 11,
+    "page number" : 1,
+    "bounding box" : [ 357.617, 407.805, 612.096, 576.936 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile4.png"
+  }, {
+    "type" : "image",
+    "id" : 12,
+    "page number" : 1,
+    "bounding box" : [ 50.916, 161.07, 303.445, 331.229 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile5.png"
+  }, {
+    "type" : "image",
+    "id" : 13,
+    "page number" : 1,
+    "bounding box" : [ 358.481, 159.871, 612.096, 331.229 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile6.png"
+  }, {
+    "type" : "footer",
+    "id" : 15,
+    "page number" : 1,
+    "bounding box" : [ 234.988, -48.039, 409.809, 126.406 ],
+    "kids" : [ {
+      "type" : "image",
+      "id" : 4,
+      "page number" : 1,
+      "bounding box" : [ 234.988, -48.039, 409.809, 126.406 ],
+      "source" : "J-50 동력전달 청소자동차_images/imageFile7.png"
+    } ]
+  }, {
+    "type" : "image",
+    "id" : 17,
+    "page number" : 2,
+    "bounding box" : [ 51.668, 647.783, 303.445, 815.428 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile8.png"
+  }, {
+    "type" : "image",
+    "id" : 18,
+    "page number" : 2,
+    "bounding box" : [ 357.617, 644.006, 612.717, 815.428 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile9.png"
+  }, {
+    "type" : "image",
+    "id" : 19,
+    "page number" : 2,
+    "bounding box" : [ 51.668, 375.388, 303.445, 543.191 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile10.png"
+  }, {
+    "type" : "image",
+    "id" : 20,
+    "page number" : 2,
+    "bounding box" : [ 357.617, 372.963, 612.096, 543.191 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile11.png"
+  }, {
+    "type" : "image",
+    "id" : 21,
+    "page number" : 2,
+    "bounding box" : [ 49.413, 144.296, 310.035, 320.731 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile12.png"
+  }, {
+    "type" : "image",
+    "id" : 22,
+    "page number" : 2,
+    "bounding box" : [ 350.23, 143.687, 612.096, 319.981 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile13.png"
+  }, {
+    "type" : "footer",
+    "id" : 24,
+    "page number" : 2,
+    "bounding box" : [ 234.988, -48.039, 409.809, 126.406 ],
+    "kids" : [ {
+      "type" : "image",
+      "id" : 5,
+      "page number" : 2,
+      "bounding box" : [ 234.988, -48.039, 409.809, 126.406 ],
+      "source" : "J-50 동력전달 청소자동차_images/imageFile14.png"
+    } ]
+  }, {
+    "type" : "image",
+    "id" : 26,
+    "page number" : 3,
+    "bounding box" : [ 51.668, 647.316, 302.756, 815.428 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile15.png"
+  }, {
+    "type" : "image",
+    "id" : 27,
+    "page number" : 3,
+    "bounding box" : [ 357.617, 644.107, 612.096, 815.428 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile16.png"
+  }, {
+    "type" : "image",
+    "id" : 29,
+    "page number" : 3,
+    "bounding box" : [ 350.23, 388.655, 612.096, 567.187 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile17.png"
+  }, {
+    "type" : "image",
+    "id" : 28,
+    "page number" : 3,
+    "bounding box" : [ 51.668, 392.984, 310.035, 566.437 ],
+    "source" : "J-50 동력전달 청소자동차_images/imageFile18.png"
+  }, {
+    "type" : "footer",
+    "id" : 30,
+    "page number" : 3,
+    "bounding box" : [ 234.988, -48.039, 409.809, 126.406 ],
+    "kids" : [ {
+      "type" : "image",
+      "id" : 6,
+      "page number" : 3,
+      "bounding box" : [ 234.988, -48.039, 409.809, 126.406 ],
+      "source" : "J-50 동력전달 청소자동차_images/imageFile19.png"
+    } ]
+  } ]
+}
