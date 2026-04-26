@@ -456,7 +456,7 @@ async def handle_manual(files: List[UploadFile] = File(...)):
 
 @app.get("/status")
 async def get_status():
-    return {**state, "has_frame": state["latest_frame"] is not None}
+    return {k: v for k, v in state.items() if k != "latest_frame"} | {"has_frame": state["latest_frame"] is not None}
 
 # ─── 강제 단계 이동 엔드포인트 ────────────────────────────────────────────────
 @app.post("/set-step")
