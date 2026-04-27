@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Assembly Coach - Interactive Navigator</title>
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <title>AI Assembly Coach - WebRTC Navigator</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
     <style>
         body { background-color: #020617; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; color: white; }
         .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.08); }
@@ -96,6 +97,9 @@
             from { opacity:0; transform:scale(0.92) translateY(6px); }
             to   { opacity:1; transform:scale(1)    translateY(0); }
         }
+
+        /* WebRTC Mobile UI용 */
+        .active-glow { box-shadow: 0 0 30px rgba(37, 99, 235, 0.6); }
     </style>
 </head>
 <body>
@@ -104,46 +108,79 @@
 <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
+    // WebRTC LiveKit 설정
+    const LIVEKIT_URL = "wss://capstone-project-jvy5e1z6.livekit.cloud";
+    const MOBILE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzcyMzI2NDksImlkZW50aXR5IjoibW9iaWxlIiwiaXNzIjoiQVBJYVpKQzlROHIyU3lOIiwibmJmIjoxNzc3MjE0NjQ5LCJzdWIiOiJtb2JpbGUiLCJ2aWRlbyI6eyJjYW5QdWJsaXNoIjp0cnVlLCJjYW5QdWJsaXNoRGF0YSI6dHJ1ZSwiY2FuU3Vic2NyaWJlIjp0cnVlLCJyb29tIjoiY2Fwc3RvbmUiLCJyb29tSm9pbiI6dHJ1ZX19.NYPS8g08F9DUorQzNwXm4fZjTg3LTUDY_he3acfmAe4";
+
     function App() {
         const isMobile = window.location.pathname.includes('mobile') || window.location.search.includes('view=mobile');
         return isMobile ? <MobileView /> : <PCView />;
     }
 
-    /* ── 모바일 뷰 (기존 그대로) ── */
+    /* ── WebRTC 모바일 뷰 ── */
     function MobileView() {
         const videoRef = useRef(null);
-        const canvasRef = useRef(null);
-        const wsRef = useRef(null);
+        const roomRef = useRef(null);
         const [connected, setConnected] = useState(false);
+        const [currentAbs, setCurrentAbs] = useState(0);
+
         useEffect(() => {
             const init = async () => {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:'environment',width:{ideal:640},height:{ideal:480}}, audio:false });
-                    if (videoRef.current) videoRef.current.srcObject = stream;
-                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    wsRef.current = new WebSocket(`${protocol}//${window.location.host}/ws`);
-                    wsRef.current.onopen  = () => setConnected(true);
-                    wsRef.current.onclose = () => setConnected(false);
-                    const sendFrame = () => {
-                        if (wsRef.current?.readyState === 1 && videoRef.current?.readyState === 4) {
-                            const ctx = canvasRef.current.getContext('2d');
-                            ctx.drawImage(videoRef.current, 0, 0, 640, 480);
-                            canvasRef.current.toBlob(blob => { if (wsRef.current?.readyState === 1) wsRef.current.send(blob); }, 'image/jpeg', 0.5);
+                    const LK = window.LivekitClient;
+                    const room = new LK.Room();
+                    roomRef.current = room;
+
+                    // 서버의 Pong 응답 수신하여 RTT 계산 및 보고
+                    room.on('dataReceived', (payload) => {
+                        const strData = new TextDecoder().decode(payload);
+                        try {
+                            const data = JSON.parse(strData);
+                            if (data.type === 'pong') {
+                                const rtt = Date.now() - data.client_time;
+                                setCurrentAbs(Math.round(rtt / 2));
+                                // 서버에 RTT 보고 (ABS 0ms 방지)
+                                const metrics = JSON.stringify({ type: "metrics", rtt: rtt });
+                                room.localParticipant.publishData(new TextEncoder().encode(metrics), LK.DataPacket_Kind.LOSSY);
+                            }
+                        } catch(e) {}
+                    });
+
+                    await room.connect(LIVEKIT_URL, MOBILE_TOKEN);
+                    
+                    // FHD 설정
+                    const tracks = await LK.createLocalTracks({
+                        video: { facingMode: 'environment', width: { exact: 1080 }, height: { exact: 1920 }, frameRate: { exact: 30 } }
+                    });
+                    
+                    const videoTrack = tracks.find(t => t.kind === 'video');
+                    if (videoRef.current && videoTrack) videoTrack.attach(videoRef.current);
+                    
+                    await room.localParticipant.publishTrack(videoTrack, { simulcast: false, priority: 'high' });
+                    setConnected(true);
+
+                    // Ping 루프
+                    const interval = setInterval(() => {
+                        if (room.state === 'connected') {
+                            const ping = JSON.stringify({ type: "ping", send_time: Date.now() });
+                            room.localParticipant.publishData(new TextEncoder().encode(ping), LK.DataPacket_Kind.LOSSY);
                         }
-                        setTimeout(sendFrame, 150);
-                    };
-                    sendFrame();
-                } catch(e) { alert("카메라 권한이 필요합니다."); }
+                    }, 50);
+
+                    return () => { clearInterval(interval); room.disconnect(); };
+                } catch (e) { alert("카메라 권한 및 연결 에러: " + e.message); }
             };
             init();
-            return () => wsRef.current?.close();
         }, []);
+
         return (
-            <div className="h-screen bg-black flex items-center justify-center relative overflow-hidden">
-                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                <canvas ref={canvasRef} style={{display:'none'}} width="640" height="480" />
-                <div className={`absolute bottom-10 left-1/2 -translate-x-1/2 px-8 py-4 rounded-full font-black text-white shadow-2xl transition-all ${connected ? 'bg-blue-600 animate-pulse' : 'bg-red-600'}`}>
-                    {connected ? "● LIVE STREAMING" : "RECONNECTING..."}
+            <div className="h-screen bg-black flex flex-col items-center justify-center relative overflow-hidden">
+                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover opacity-70" />
+                <div className="absolute top-10 px-6 py-2 rounded-full font-bold text-xs bg-black/60 border border-white/20 backdrop-blur-md">
+                    📡 WebRTC | ABS: <span className="text-blue-400">{currentAbs}ms</span>
+                </div>
+                <div className={`absolute bottom-20 px-10 py-5 rounded-full font-black text-white border-2 ${connected ? 'bg-blue-600 border-blue-400 active-glow' : 'bg-red-600 animate-pulse'}`}>
+                    {connected ? "LIVE STREAMING ACTIVE" : "CONNECTING..."}
                 </div>
             </div>
         );
@@ -152,7 +189,7 @@
     /* ── [개선 1] 업로드 진행 단계 컴포넌트 ── */
     function UploadProgress({ status, onCancel }) {
         const STEPS = [
-            { id:'upload',  label:'파일 업로드',    desc:'서버로 전송 중' },
+            { id:'upload',  label:'파일 업로드',   desc:'서버로 전송 중' },
             { id:'render',  label:'페이지 렌더링',  desc:'PDF → 이미지 변환' },
             { id:'analyze', label:'AI 지시문 추출', desc:'Gemini 페이지 병렬 분석 중' },
             { id:'done',    label:'완료',           desc:'코칭 화면으로 이동' },
@@ -239,10 +276,13 @@
                             className="px-10 py-4 rounded-2xl bg-slate-800 text-slate-300 font-black text-sm hover:bg-slate-700 transition-all border border-white/10">
                             처음으로 돌아가기
                         </button>
-                        <button onClick={() => window.location.reload()}
-                            className="px-10 py-4 rounded-2xl bg-blue-600 text-white font-black text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/30">
-                            새 매뉴얼 시작
-                        </button>
+                        <button onClick={async () => {
+        await fetch('/reset', { method: 'POST' }); // ✨ 초기화 추가
+        window.location.reload();
+    }}
+    className="px-10 py-4 rounded-2xl bg-blue-600 text-white font-black text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/30">
+    새 매뉴얼 시작
+</button>
                     </div>
                 </div>
             </div>
@@ -261,6 +301,8 @@
         const [isDragging, setIsDragging]           = useState(false);    // 드래그앤드롭
         const [ttsOn, setTtsOn]                     = useState(true);      // TTS 토글
         const [settingsOpen, setSettingsOpen]       = useState(false);    // 설정 패널
+        const [isAnalyzing, setIsAnalyzing]         = useState(false);    // VLM 분석 상태
+
         const inputRef  = useRef(null);
         const listRef   = useRef(null);   // [개선 4]
         const stepRefs  = useRef([]);     // [개선 4]
@@ -282,6 +324,31 @@
             }, 1000);
             return () => clearInterval(timer);
         }, [view, uploading]);
+
+        /* VLM 분석 트리거 함수 */
+        const triggerVLM = useCallback(async () => {
+            if (isAnalyzing || !status.has_frame) return;
+            setIsAnalyzing(true);
+            try {
+                const res = await fetch('/trigger-vlm', { method: 'POST' });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    console.log("VLM 분석 성공:", data);
+                    // AI가 자동으로 단계를 넘겼을 수 있으므로 UI 동기화를 위해 수동 락 해제
+                    if (data.prediction.result === "PASS" && !status.step_locked && userSelectedIdx !== null) {
+                        setUserSelectedIdx(null);
+                    }
+                } else {
+                    alert(data.message || "VLM 분석에 실패했습니다.");
+                }
+            } catch (error) {
+                console.error("VLM 서버 요청 오류:", error);
+                alert("서버 통신 중 오류가 발생했습니다.");
+            } finally {
+                setIsAnalyzing(false);
+            }
+        }, [isAnalyzing, status.has_frame, status.step_locked, userSelectedIdx]);
 
         /* 업로드 공통 처리 (클릭 + 드래그 공용) */
         const uploadFiles = useCallback(async (files) => {
@@ -348,12 +415,13 @@
         }, [userSelectedIdx, status.current_step_idx, totalSteps, forceSetStep]);
 
         /* 홈으로 이동 (업로드/코칭 → 랜딩) */
-        const goHome = useCallback(() => {
+        const goHome = useCallback(async () => {
+            await fetch('/reset', { method: 'POST' }); // ✨ 백엔드 초기화 호출 추가!
             setView('landing');
             setUploading(false);
             setUserSelectedIdx(null);
             setShowComplete(false);
-            setModalImg(null);
+            setModalImg(null);  
         }, []);
 
         /* AI 추적 모드 복귀 */
@@ -487,10 +555,13 @@
                                                 이어서 계속하기 →
                                             </button>
                                             <button
-                                                onClick={() => setView('upload')}
-                                                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white font-black text-sm transition-all border border-white/6">
-                                                새로 시작
-                                            </button>
+    onClick={async () => {
+        await fetch('/reset', { method: 'POST' }); // ✨ 초기화 추가
+        setView('upload');
+    }}
+    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white font-black text-sm transition-all border border-white/6">
+    새로 시작
+</button>
                                         </div>
                                     </div>
                                 </div>
@@ -641,16 +712,39 @@
                                     </div>
                                 )}
 
-                                {/* Vision Analytics 오버레이 — 피드 하단에 고정 */}
-                                <div className="absolute bottom-0 left-0 right-0 px-6 py-4"
-                                    style={{background:'linear-gradient(to top, rgba(2,6,23,0.92) 0%, rgba(2,6,23,0.6) 60%, transparent 100%)'}}>
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>
-                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">Vision Analytics</span>
+                                {/* Vision Analytics 오버레이 및 VLM 분석 버튼 */}
+                                <div className="absolute bottom-0 left-0 right-0 px-8 py-6 flex items-end justify-between"
+                                    style={{background:'linear-gradient(to top, rgba(2,6,23,0.95) 0%, rgba(2,6,23,0.6) 60%, transparent 100%)'}}>
+                                    
+                                    <div className="flex-1 mr-4">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <div className={`w-2 h-2 rounded-full ${isAnalyzing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500 animate-ping'}`}></div>
+                                            <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest font-mono">
+                                                {isAnalyzing ? 'Vision Analytics (분석 중...)' : 'Vision Analytics'}
+                                            </span>
+                                        </div>
+                                        <p className="text-xl font-black leading-snug text-white/95 break-keep">
+                                            {status.has_frame ? status.ai_response : "모바일 기기를 연결하여 실시간 코칭을 받으세요."}
+                                        </p>
                                     </div>
-                                    <p className="text-xl font-black leading-snug text-white/95 break-keep">
-                                        {status.has_frame ? status.ai_response : "모바일 기기를 연결하여 실시간 코칭을 받으세요."}
-                                    </p>
+
+                                    {/* VLM 수동 분석 버튼 추가 */}
+                                    {status.has_frame && (
+                                        <button 
+                                            onClick={triggerVLM}
+                                            disabled={isAnalyzing}
+                                            className="flex-shrink-0 px-6 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white font-black text-sm transition-all shadow-lg shadow-blue-500/30 active:scale-95 flex items-center gap-2"
+                                        >
+                                            {isAnalyzing ? (
+                                                <>
+                                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                                    분석 중...
+                                                </>
+                                            ) : (
+                                                <>🔍 VLM 분석</>
+                                            )}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>

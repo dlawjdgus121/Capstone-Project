@@ -9,13 +9,17 @@ import uvicorn
 import glob
 import re
 import subprocess
+import cv2
+import numpy as np
 from typing import List
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Form
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from dotenv import load_dotenv
+from livekit import rtc
 
 # 1. 환경 변수 로드
 load_dotenv()
@@ -25,18 +29,11 @@ try:
 except ImportError:
     print("⚠️ [DEBUG] 'pip install opendataloader-pdf' 라이브러리가 필요합니다.")
 
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- [환경 변수 및 모델 URL 설정] ---
+# ==========================================
+# 🌟 환경 변수 및 설정
+# ==========================================
 API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-09-2025")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
 raw_runpod_url = os.getenv("RUNPOD_INFERENCE_URL", "").strip()
@@ -47,27 +44,36 @@ if raw_runpod_url:
 else:
     RUNPOD_INFERENCE_URL = None
 
+LIVEKIT_URL = "wss://capstone-project-jvy5e1z6.livekit.cloud"
+LIVEKIT_TOKEN = os.getenv("LIVEKIT_TOKEN")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 
+# --- [시스템 상태 관리] ---
 state = {
     "latest_frame": None,
+    "latest_frame_raw": None,
     "manual_steps": [],
     "current_step_idx": 0,
     "ai_response": "대기 중...",
     "is_analyzed": False,
     "analysis_time": 0.0,
     "is_coaching_active": False,
-    # 강제 이동 잠금: True이면 coaching_loop가 current_step_idx를 자동으로 바꾸지 않음
     "step_locked": False,
-    "progress_step": "upload"  # upload | render | analyze | done
+    "progress_step": "upload",
+    # WebRTC 추가 지표
+    "client_send_time": 0.0,
+    "last_rtt": 0.0,
+    "current_fps": 0.0,
+    "log": "모바일 연결 대기 중..."
 }
 
-# ─── 세션 저장/복원 ──────────────────────────────────────────────────────────
+prev_frame_time = 0.0
 SESSION_FILE = os.path.join(OUTPUT_DIR, "last_session.json")
 
+# ─── 세션 저장/복원 ──────────────────────────────────────────────────────────
 def save_session():
     """현재 단계 인덱스와 매뉴얼 경로를 디스크에 저장."""
     if not state["is_analyzed"] or not state["manual_steps"]:
@@ -150,6 +156,26 @@ async def coaching_loop():
         else:
             await asyncio.sleep(1.0)
 
+# ─── 생명주기 관리 (WebRTC 및 자동 코칭 백그라운드 태스크) ──────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_session()
+    # coaching_task = asyncio.create_task(coaching_loop()) 
+    livekit_task = asyncio.create_task(run_livekit())
+    yield
+    # coaching_task.cancel()
+    livekit_task.cancel()
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
+
 # --- [PDF 조각 분석: 한국어 강제 출력 및 정밀 필터링] ---
 async def render_pdf_pages(pdf_path: str, out_dir: str, dpi: int = 200) -> list[str]:
     """pdftoppm으로 PDF 각 페이지를 JPEG 이미지로 변환 후 경로 목록 반환."""
@@ -165,12 +191,9 @@ async def render_pdf_pages(pdf_path: str, out_dir: str, dpi: int = 200) -> list[
     print(f"📄 [SYSTEM] PDF {len(pages)}페이지 렌더링 완료")
     return pages
 
-
 async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: str) -> list[dict]:
     """
     페이지 전체 이미지를 Gemini에 넘겨 모든 STEP을 한 번에 추출.
-    - STEP 이미지는 bounding box로 크롭해 저장
-    - desc는 이미지 아래 인쇄된 한국어 지시문 원문 그대로
     """
     try:
         with Image.open(page_img_path) as img:
@@ -260,12 +283,9 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
         print(f"🚨 페이지 분석 에러 (page {page_num}): {e}")
         return []
 
-
 async def detect_and_crop_image(client, img_path, base_idx):
     """
     이미지 파일(PNG/JPG 등) 전용 처리.
-    - 텍스트 지시문이 없는 다이어그램/일러스트도 처리
-    - Gemini가 각 STEP의 시각적 동작을 한국어로 직접 설명
     """
     try:
         with Image.open(img_path) as img:
@@ -355,13 +375,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
         print(f"🚨 이미지 분석 에러: {e}")
     return []
 
-
-# --- [FastAPI 라우팅] ---
-
-@app.on_event("startup")
-async def startup():
-    load_session()
-    asyncio.create_task(coaching_loop())
+# --- [API 라우팅] ---
 
 @app.post("/process-manual")
 async def handle_manual(files: List[UploadFile] = File(...)):
@@ -454,50 +468,159 @@ async def handle_manual(files: List[UploadFile] = File(...)):
     print(f"✅ [SUCCESS] 분석 완료.")
     return {"status": "success", "steps": final_filtered_steps}
 
-@app.get("/status")
-async def get_status():
-    return {k: v for k, v in state.items() if k != "latest_frame"} | {"has_frame": state["latest_frame"] is not None}
-
-# ─── 강제 단계 이동 엔드포인트 ────────────────────────────────────────────────
 @app.post("/set-step")
 async def set_step(body: dict):
-    """
-    프론트엔드에서 강제로 AI Focus(current_step_idx)를 이동시킵니다.
-    body: { "idx": int, "locked": bool }
-      - idx: 이동할 단계 인덱스
-      - locked: True면 AI 자동 추적을 일시 중단, False면 재개
-    """
     total = len(state["manual_steps"])
-    if total == 0:
-        return {"status": "error", "message": "매뉴얼이 로드되지 않았습니다."}
-
-    idx = int(body.get("idx", state["current_step_idx"]))
-    locked = bool(body.get("locked", True))
-
-    # 범위 클램프
-    idx = max(0, min(idx, total - 1))
-
-    state["current_step_idx"] = idx
-    state["step_locked"] = locked
-    save_session()  # 수동 이동도 즉시 저장
-    print(f"🔧 [MANUAL] AI Focus 강제 이동 → step {idx}, locked={locked}")
+    if total == 0: return {"status": "error", "message": "매뉴얼이 로드되지 않았습니다."}
+    idx, locked = max(0, min(int(body.get("idx", state["current_step_idx"])), total - 1)), bool(body.get("locked", True))
+    state["current_step_idx"], state["step_locked"] = idx, locked
+    save_session()
     return {"status": "ok", "current_step_idx": idx, "step_locked": locked}
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        while True: state["latest_frame"] = await websocket.receive_bytes()
-    except WebSocketDisconnect: state["latest_frame"] = None
+
+
+
+@app.get("/status")
+async def get_status():
+    return {
+        "manual_steps": state["manual_steps"],
+        "is_analyzed": state["is_analyzed"], "current_step_idx": state["current_step_idx"],
+        "ai_response": state["ai_response"], "analysis_time": state["analysis_time"],
+        "progress_step": state["progress_step"], "step_locked": state["step_locked"],
+        "log": state["log"], "current_fps": state["current_fps"], "last_rtt": state["last_rtt"],
+        "has_frame": state["latest_frame"] is not None
+    }
+
+@app.post("/reset")
+async def reset_session():
+    """새로운 매뉴얼을 올리기 위해 기존 분석 데이터를 싹 지웁니다."""
+    state.update({
+        "manual_steps": [],
+        "current_step_idx": 0,
+        "ai_response": "대기 중...",
+        "is_analyzed": False,
+        "analysis_time": 0.0,
+        "step_locked": False,
+        "progress_step": "upload"
+    })
+    # 저장되어 있던 세션 파일도 삭제
+    if os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
+    print("🗑️ [SESSION] 이전 매뉴얼 데이터 초기화 완료")
+    return {"status": "ok"}
 
 @app.get("/stream")
 async def stream():
     async def gen():
         while True:
-            if state["latest_frame"]:
-                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + state["latest_frame"] + b"\r\n")
-            await asyncio.sleep(0.06)
+            if state["latest_frame"]: yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + state["latest_frame"] + b"\r\n")
+            await asyncio.sleep(0.04)
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+@app.post("/trigger-vlm")
+async def trigger_vlm_analysis():
+    """프론트엔드에서 'VLM 분석' 버튼을 눌렀을 때 1회 호출되는 엔드포인트"""
+    # 1. 상태 체크 (매뉴얼 로드 및 프레임 수신 여부)
+    if not state["is_analyzed"] or not state["manual_steps"]:
+        return {"status": "error", "message": "매뉴얼이 아직 준비되지 않았습니다."}
+    if not state["latest_frame"]:
+        return {"status": "error", "message": "카메라 렌즈를 통해 프레임을 수신하는 중입니다."}
+
+    # 2. 현재 스텝 및 이미지 가져오기
+    idx = state["current_step_idx"]
+    current_step = state["manual_steps"][idx]
+
+    # 3. GPU 인퍼런스 서버로 전송 (이미 만들어진 함수 재사용)
+    prediction = await call_runpod_inference(current_step["image_url"], state["latest_frame"])
+
+    # 4. 결과 처리 및 상태 업데이트
+    if prediction and prediction.get("result") != "ERROR":
+        result_status = prediction.get("result", "UNKNOWN")
+        reason = prediction.get("reason", "분석 완료")
+        
+        # 전역 상태(Web UI 출력용) 업데이트
+        state["ai_response"] = f"[{result_status}] {reason}"
+
+        # 분석 결과가 PASS이고, 사용자가 단계를 고정(lock)하지 않았다면 다음 단계로 자동 이동
+        if result_status == "PASS" and not state["step_locked"]:
+            if idx + 1 < len(state["manual_steps"]):
+                state["current_step_idx"] = idx + 1
+                save_session()
+
+        return {
+            "status": "success", 
+            "prediction": prediction,
+            "current_step": state["current_step_idx"]
+        }
+    else:
+        err_reason = prediction.get("reason", "알 수 없는 오류") if prediction else "응답 없음"
+        return {"status": "error", "message": f"VLM 통신 실패: {err_reason}"}
+
+# ==========================================
+# 🌟 WebRTC (LiveKit) 영상 처리 파트 추가
+# ==========================================
+async def process_video_track(track: rtc.VideoTrack):
+    global prev_frame_time
+    video_stream = rtc.VideoStream(track)
+    target_format = rtc.VideoFormatType.FORMAT_RGBA8888 if hasattr(rtc, 'VideoFormatType') else 3
+
+    last_process_time = time.time()
+
+    async for event in video_stream:
+        await asyncio.sleep(0.001)
+
+        curr_time = time.time()
+        if prev_frame_time > 0:
+            diff = curr_time - prev_frame_time
+            if diff > 0.01: state["current_fps"] = 1.0 / diff
+        prev_frame_time = curr_time
+        
+        # 20FPS 리밋 제어
+        if curr_time - last_process_time < 0.05: continue
+        last_process_time = time.time()
+
+        frame = event.frame
+        rgba_frame = frame.convert(target_format)
+        img = np.frombuffer(rgba_frame.data, dtype=np.uint8).reshape((rgba_frame.height, rgba_frame.width, 4))
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        
+        h, w = img_bgr.shape[:2]
+        target_size = 720
+        new_w, new_h = (target_size, int(h * target_size / w)) if h > w else (int(w * target_size / h), target_size)
+        
+        img_resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        _, buffer = cv2.imencode('.jpg', img_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        
+        frame_bytes = buffer.tobytes()
+        state["latest_frame"], state["latest_frame_raw"] = frame_bytes, frame_bytes
+        state["log"] = f"📡 720p Stream | FPS: {round(state['current_fps'], 1):4} | ABS: {round(state['last_rtt']/2, 1):5}ms"
+
+async def run_livekit():
+    room = rtc.Room()
+    @room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        if track.kind == rtc.TrackKind.KIND_VIDEO: asyncio.create_task(process_video_track(track))
+        
+    @room.on("data_received")
+    def on_data_received(data: rtc.DataPacket):
+        try:
+            payload = json.loads(data.data.decode("utf-8"))
+            if payload.get("type") == "ping":
+                state["client_send_time"] = payload.get("send_time")
+                resp = json.dumps({"type": "pong", "client_time": payload.get("send_time")})
+                asyncio.create_task(room.local_participant.publish_data(resp.encode("utf-8")))
+            elif payload.get("type") == "metrics":
+                state["last_rtt"] = float(payload.get("rtt", 0.0))
+        except: pass
+    
+    try:
+        if not LIVEKIT_TOKEN:
+            print("🚨 [ERROR] LIVEKIT_TOKEN이 .env 파일에 없습니다!")
+            return
+        await room.connect(LIVEKIT_URL, LIVEKIT_TOKEN)
+        print("✅ [SYSTEM] LiveKit 서버 접속 성공")
+    except Exception as e:
+        print(f"🚨 [ERROR] LiveKit 접속 실패: {e}")
 
 @app.get("/")
 @app.get("/mobile")
