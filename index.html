@@ -23,7 +23,6 @@
         .clickable { cursor: pointer; pointer-events: auto !important; }
         .step-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; z-index: 10; }
 
-        /* 강제 이동 버튼 */
         .nav-btn {
             display: flex; align-items: center; justify-content: center; gap: 6px;
             font-weight: 900; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
@@ -37,7 +36,6 @@
         .nav-btn-next:hover:not(:disabled) { background: linear-gradient(135deg,#3b82f6,#2563eb); box-shadow: 0 12px 28px rgba(37,99,235,0.5); transform: translateY(-1px); }
         .nav-btn:disabled { opacity: 0.25; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
 
-        /* 이미지 컨테이너 */
         .step-img-wrap {
             width: 100%; aspect-ratio: 16/9; background: white; border-radius: 1.5rem;
             display: flex; align-items: center; justify-content: center;
@@ -48,58 +46,46 @@
         .step-img-wrap img { max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; transition:transform 0.4s ease; }
         .step-img-wrap:hover img { transform: scale(1.06); }
 
-        /* [개선 2] 이미지 모달 */
+        /* ✨ 하드웨어/시각화 추가 스타일 */
+        .mirror-mode { transform: scaleX(-1); }
+        .osd-shadow { text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
         .img-modal-backdrop {
             position: fixed; inset: 0; z-index: 1000;
             background: rgba(2,6,23,0.93); backdrop-filter: blur(20px);
             display: flex; align-items: center; justify-content: center;
-            animation: modal-in 0.18s ease-out;
         }
-        @keyframes modal-in { from{opacity:0} to{opacity:1} }
-        .img-modal-box { position: relative; max-width: 88vw; max-height: 88vh; display:flex; flex-direction:column; align-items:center; gap:16px; }
-        .img-modal-box img { max-width:100%; max-height:80vh; object-fit:contain; border-radius:2rem; box-shadow:0 40px 80px rgba(0,0,0,0.7); animation:modal-img-in 0.22s cubic-bezier(0.4,0,0.2,1); }
-        @keyframes modal-img-in { from{transform:scale(0.93)} to{transform:scale(1)} }
-        .img-modal-close { position:absolute; top:-14px; right:-14px; width:36px; height:36px; border-radius:50%; border:none; cursor:pointer; background:rgba(30,41,59,0.95); color:#94a3b8; font-size:18px; font-weight:900; display:flex; align-items:center; justify-content:center; transition:all 0.15s; box-shadow:0 4px 12px rgba(0,0,0,0.4); }
-        .img-modal-close:hover { background:#ef4444; color:white; transform:scale(1.1); }
-
-        /* [개선 1] 업로드 진행 단계 */
         .progress-dot { width:28px; height:28px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:900; transition:all 0.4s ease; }
         .progress-dot.done  { background:#10b981; color:white; }
         .progress-dot.active { background:#2563eb; color:white; animation:dot-pulse 1.2s infinite; }
         .progress-dot.waiting { background:rgba(30,41,59,0.8); color:#475569; border:1px solid rgba(255,255,255,0.06); }
         @keyframes dot-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0.5)} 50%{box-shadow:0 0 0 8px rgba(37,99,235,0)} }
-
-        /* [개선 3] 완료 화면 */
-        @keyframes complete-pop { 0%{transform:scale(0.7);opacity:0} 70%{transform:scale(1.08)} 100%{transform:scale(1);opacity:1} }
         .complete-pop { animation: complete-pop 0.55s cubic-bezier(0.34,1.56,0.64,1) forwards; }
-        @keyframes confetti-fall { from{transform:translateY(-10px) rotate(0deg);opacity:1} to{transform:translateY(70px) rotate(360deg);opacity:0} }
-        .confetti { animation: confetti-fall 1.2s ease-in forwards; position:absolute; }
+        @keyframes complete-pop { 0%{transform:scale(0.7);opacity:0} 70%{transform:scale(1.08)} 100%{transform:scale(1);opacity:1} }
+        /* ✨ 3번: 브라우저 가로 레이아웃 고정 스타일 */
+/* ✨ 영상을 크게 만들고 거울 모드를 확실히 적용 */
+.video-fixed-ratio {
+    width: 95%; /* 🚀 중앙 영역의 95%를 차지하도록 확대 */
+    max-width: 1400px; /* 최대 너비 제한 (너무 퍼지는 것 방지) */
+    aspect-ratio: 16 / 9; /* 🚀 16:9 가로 비율 고정 */
+    background: #000;
+    border-radius: 3rem;
+    overflow: hidden;
+    position: relative;
+    border: 3px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.7);
+    margin: 0 auto; /* 가로 중앙 정렬 */
+}
 
-        /* 키보드 힌트 */
-        .kbd { display:inline-flex; align-items:center; justify-content:center; background:rgba(30,41,59,0.8); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:2px 7px; font-size:10px; font-family:monospace; color:#64748b; font-weight:700; }
+.video-fixed-ratio img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* 🚀 검은 여백 없이 꽉 채우기 */
+}
 
-        @keyframes pulse-soft { 0%,100%{opacity:1} 50%{opacity:0.7} }
-        @keyframes step-in { from{opacity:0.4;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
-        .step-in { animation: step-in 0.25s ease-out; }
-
-        /* 설정 팝업 */
-        .settings-popup {
-            position: absolute;
-            bottom: calc(100% + 10px);
-            right: 0;
-            width: 220px;
-            z-index: 100;
-            animation: popup-in 0.18s cubic-bezier(0.4,0,0.2,1);
-            transform-origin: bottom right;
-        }
-        @keyframes spin-slow { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-        @keyframes popup-in {
-            from { opacity:0; transform:scale(0.92) translateY(6px); }
-            to   { opacity:1; transform:scale(1)    translateY(0); }
-        }
-
-        /* WebRTC Mobile UI용 */
-        .active-glow { box-shadow: 0 0 30px rgba(37, 99, 235, 0.6); }
+/* 🚀 거울 모드 (이미지를 좌우로 반전) */
+.mirror-mode {
+    transform: scaleX(-1) !important;
+}
     </style>
 </head>
 <body>
@@ -108,19 +94,14 @@
 <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    // WebRTC LiveKit 설정
     const LIVEKIT_URL = "wss://capstone-project-jvy5e1z6.livekit.cloud";
-    const MOBILE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzcyMzI2NDksImlkZW50aXR5IjoibW9iaWxlIiwiaXNzIjoiQVBJYVpKQzlROHIyU3lOIiwibmJmIjoxNzc3MjE0NjQ5LCJzdWIiOiJtb2JpbGUiLCJ2aWRlbyI6eyJjYW5QdWJsaXNoIjp0cnVlLCJjYW5QdWJsaXNoRGF0YSI6dHJ1ZSwiY2FuU3Vic2NyaWJlIjp0cnVlLCJyb29tIjoiY2Fwc3RvbmUiLCJyb29tSm9pbiI6dHJ1ZX19.NYPS8g08F9DUorQzNwXm4fZjTg3LTUDY_he3acfmAe4";
+    const MOBILE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzc0OTMyOTYsImlkZW50aXR5IjoibWIiLCJpc3MiOiJBUElhWkpDOVE4cjJTeU4iLCJuYmYiOjE3Nzc0NTcyOTYsInN1YiI6Im1iIiwidmlkZW8iOnsiY2FuUHVibGlzaCI6dHJ1ZSwiY2FuUHVibGlzaERhdGEiOnRydWUsImNhblN1YnNjcmliZSI6dHJ1ZSwicm9vbSI6ImNkIiwicm9vbUpvaW4iOnRydWV9fQ.CAQj2czWzd3pAH_2ssAvSvoZHJC8fIIoXGruJNyoMDY";
 
-    function App() {
-        const isMobile = window.location.pathname.includes('mobile') || window.location.search.includes('view=mobile');
-        return isMobile ? <MobileView /> : <PCView />;
-    }
-
-    /* ── WebRTC 모바일 뷰 ── */
+    /* ── [복구] 모바일 전용 송출 뷰 ── */
+    /* ── [수정] 모바일 전용 송출 뷰 (좌우 반전 토글 적용) ── */
+    /* ── [최종 고정 버전] 모바일 전용 송출 뷰 (좌우 반전 고정) ── */
     function MobileView() {
         const videoRef = useRef(null);
-        const roomRef = useRef(null);
         const [connected, setConnected] = useState(false);
         const [currentAbs, setCurrentAbs] = useState(0);
 
@@ -129,56 +110,49 @@
                 try {
                     const LK = window.LivekitClient;
                     const room = new LK.Room();
-                    roomRef.current = room;
-
-                    // 서버의 Pong 응답 수신하여 RTT 계산 및 보고
-                    room.on('dataReceived', (payload) => {
-                        const strData = new TextDecoder().decode(payload);
-                        try {
-                            const data = JSON.parse(strData);
-                            if (data.type === 'pong') {
-                                const rtt = Date.now() - data.client_time;
-                                setCurrentAbs(Math.round(rtt / 2));
-                                // 서버에 RTT 보고 (ABS 0ms 방지)
-                                const metrics = JSON.stringify({ type: "metrics", rtt: rtt });
-                                room.localParticipant.publishData(new TextEncoder().encode(metrics), LK.DataPacket_Kind.LOSSY);
-                            }
-                        } catch(e) {}
-                    });
-
                     await room.connect(LIVEKIT_URL, MOBILE_TOKEN);
-                    
-                    // FHD 설정
-                    const tracks = await LK.createLocalTracks({
-                        video: { facingMode: 'environment', width: { exact: 1080 }, height: { exact: 1920 }, frameRate: { exact: 30 } }
+
+                    const tracks = await window.LivekitClient.createLocalTracks({
+                        video: { 
+                            facingMode: 'environment', // 후면 카메라
+                            width: { ideal: 1280 }, 
+                            height: { ideal: 720 }, 
+                            frameRate: 30 
+                        }
                     });
-                    
+
                     const videoTrack = tracks.find(t => t.kind === 'video');
                     if (videoRef.current && videoTrack) videoTrack.attach(videoRef.current);
+
+                    await room.localParticipant.publishTrack(videoTrack, { 
+                        simulcast: false, 
+                        videoEncoding: {
+                            maxBitrate: 3_000_000, // 3Mbps
+                        },
+                        priority: 'high' 
+                    });
                     
-                    await room.localParticipant.publishTrack(videoTrack, { simulcast: false, priority: 'high' });
                     setConnected(true);
-
-                    // Ping 루프
-                    const interval = setInterval(() => {
-                        if (room.state === 'connected') {
-                            const ping = JSON.stringify({ type: "ping", send_time: Date.now() });
-                            room.localParticipant.publishData(new TextEncoder().encode(ping), LK.DataPacket_Kind.LOSSY);
-                        }
-                    }, 50);
-
-                    return () => { clearInterval(interval); room.disconnect(); };
-                } catch (e) { alert("카메라 권한 및 연결 에러: " + e.message); }
+                } catch (e) { alert("연결 에러: " + e.message); }
             };
             init();
         }, []);
 
         return (
             <div className="h-screen bg-black flex flex-col items-center justify-center relative overflow-hidden">
-                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover opacity-70" />
-                <div className="absolute top-10 px-6 py-2 rounded-full font-bold text-xs bg-black/60 border border-white/20 backdrop-blur-md">
-                    📡 WebRTC | ABS: <span className="text-blue-400">{currentAbs}ms</span>
+                {/* ✨ 버튼을 없애고, Tailwind의 좌우반전 클래스(-scale-x-100)를 기본으로 고정했습니다. */}
+                <video 
+                    ref={videoRef} 
+                    autoPlay 
+                    playsInline 
+                    muted 
+                    className="w-full h-full object-cover opacity-70" 
+                />
+                
+                <div className="absolute top-10 px-6 py-2 rounded-full font-bold text-xs bg-black/60 border border-white/20 backdrop-blur-md text-blue-400">
+                    📡 TRANSMITTER MODE | ABS: {currentAbs}ms
                 </div>
+                
                 <div className={`absolute bottom-20 px-10 py-5 rounded-full font-black text-white border-2 ${connected ? 'bg-blue-600 border-blue-400 active-glow' : 'bg-red-600 animate-pulse'}`}>
                     {connected ? "LIVE STREAMING ACTIVE" : "CONNECTING..."}
                 </div>
@@ -186,137 +160,75 @@
         );
     }
 
-    /* ── [개선 1] 업로드 진행 단계 컴포넌트 ── */
+    /* ── 분석 단계 컴포넌트 ── */
     function UploadProgress({ status, onCancel }) {
         const STEPS = [
-            { id:'upload',  label:'파일 업로드',   desc:'서버로 전송 중' },
-            { id:'render',  label:'페이지 렌더링',  desc:'PDF → 이미지 변환' },
-            { id:'analyze', label:'AI 지시문 추출', desc:'Gemini 페이지 병렬 분석 중' },
-            { id:'done',    label:'완료',           desc:'코칭 화면으로 이동' },
+            { id:'upload',  label:'파일 업로드',   desc:'서버 전송 중' },
+            { id:'render',  label:'페이지 렌더링', desc:'이미지 변환 중' },
+            { id:'analyze', label:'AI 지시문 추출', desc:'Gemini 분석 중' },
+            { id:'done',    label:'완료',           desc:'이동 중' },
         ];
         const curIdx = Math.max(0, STEPS.findIndex(s => s.id === (status.progress_step || 'upload')));
         return (
             <div className="w-full max-w-xl glass p-10 rounded-[3rem] shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
                 <h2 className="text-4xl font-black mb-2 text-blue-400 text-center">매뉴얼 분석 중</h2>
-                <p className="text-slate-500 text-sm mb-8 font-mono text-center">{status.analysis_time > 0 ? `${status.analysis_time}s 경과` : '시작 중...'}</p>
+                <p className="text-slate-500 text-sm mb-8 font-mono text-center">{status.analysis_time}s 분석 경과</p>
                 <div className="space-y-2 mb-8">
                     {STEPS.map((s, i) => {
                         const st = i < curIdx ? 'done' : i === curIdx ? 'active' : 'waiting';
                         return (
                             <div key={s.id} className="flex items-center gap-3 py-2">
                                 <div className={`progress-dot ${st}`}>{st === 'done' ? '✓' : i + 1}</div>
-                                <div className="flex-1">
-                                    <p className={`text-sm font-black ${st === 'waiting' ? 'text-slate-600' : 'text-white'}`}>{s.label}</p>
-                                    {st === 'active' && <p className="text-[11px] text-blue-400 mt-0.5">{s.desc}</p>}
-                                </div>
+                                <div className="flex-1 font-black text-sm">{s.label}</div>
                                 {st === 'active' && <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />}
                             </div>
                         );
                     })}
                 </div>
-                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-blue-600 to-emerald-500 rounded-full transition-all duration-700"
-                        style={{ width:`${Math.max(6, (curIdx / (STEPS.length-1)) * 100)}%` }} />
-                </div>
-                <button onClick={onCancel}
-                    className="mt-7 w-full py-3 rounded-2xl bg-slate-900/80 border border-white/6 text-slate-500 hover:text-slate-300 hover:border-white/15 text-[11px] font-black uppercase tracking-widest transition-all">
-                    ✕ 취소하고 처음으로
-                </button>
+                <button onClick={onCancel} className="w-full py-3 rounded-2xl bg-slate-900 border border-white/6 text-slate-500 text-[11px] font-black uppercase tracking-widest transition-all">✕ 취소</button>
             </div>
         );
     }
 
-    /* ── [개선 2] 이미지 모달 컴포넌트 ── */
-    function ImageModal({ src, title, onClose }) {
-        useEffect(() => {
-            const h = (e) => { if (e.key === 'Escape') onClose(); };
-            window.addEventListener('keydown', h);
-            return () => window.removeEventListener('keydown', h);
-        }, [onClose]);
-        return (
-            <div className="img-modal-backdrop" onClick={onClose}>
-                <div className="img-modal-box" onClick={e => e.stopPropagation()}>
-                    <button className="img-modal-close" onClick={onClose}>✕</button>
-                    <img src={src} alt={title} />
-                    <div className="glass px-5 py-2 rounded-2xl text-center">
-                        <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{title}</span>
-                        <span className="text-[10px] text-slate-600 ml-3">ESC 또는 바깥 클릭으로 닫기</span>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    /* ── [개선 3] 완료 화면 컴포넌트 ── */
+    /* ── 완료 화면 ── */
     function CompletionOverlay({ totalSteps, onRestart }) {
         return (
             <div className="img-modal-backdrop">
-                <div className="flex flex-col items-center gap-8 complete-pop">
-                    <div className="relative flex items-center justify-center w-32 h-32">
-                        {['🎉','✨','🔧','⭐','🎊'].map((em, i) => (
-                            <span key={i} className="confetti text-3xl"
-                                style={{left:`${-50+i*25}px`, top:0, animationDelay:`${i*0.15}s`, animationDuration:`${1.0+i*0.2}s`}}>
-                                {em}
-                            </span>
-                        ))}
-                        <div className="w-28 h-28 rounded-full bg-emerald-500/20 border-2 border-emerald-500/40 flex items-center justify-center">
-                            <span className="text-6xl">🏁</span>
-                        </div>
-                    </div>
-                    <div className="text-center">
-                        <h2 className="text-6xl font-black italic tracking-tighter mb-3 bg-gradient-to-br from-emerald-400 via-white to-blue-400 bg-clip-text text-transparent">
-                            조립 완료!
-                        </h2>
-                        <p className="text-slate-400 text-lg font-medium">
-                            총 <span className="text-white font-black">{totalSteps}단계</span>를 모두 완료했습니다.
-                        </p>
+                <div className="flex flex-col items-center gap-8 complete-pop text-center">
+                    <div className="w-28 h-28 rounded-full bg-emerald-500/20 border-2 border-emerald-500/40 flex items-center justify-center text-6xl">🏁</div>
+                    <div>
+                        <h2 className="text-6xl font-black italic tracking-tighter mb-3 bg-gradient-to-br from-emerald-400 via-white to-blue-400 bg-clip-text text-transparent uppercase">Assembly Done!</h2>
+                        <p className="text-slate-400 text-lg font-medium">총 <span className="text-white font-black">{totalSteps}단계</span>를 완료했습니다.</p>
                     </div>
                     <div className="flex gap-4">
-                        <button onClick={onRestart}
-                            className="px-10 py-4 rounded-2xl bg-slate-800 text-slate-300 font-black text-sm hover:bg-slate-700 transition-all border border-white/10">
-                            처음으로 돌아가기
-                        </button>
-                        <button onClick={async () => {
-        await fetch('/reset', { method: 'POST' }); // ✨ 초기화 추가
-        window.location.reload();
-    }}
-    className="px-10 py-4 rounded-2xl bg-blue-600 text-white font-black text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/30">
-    새 매뉴얼 시작
-</button>
+                        <button onClick={onRestart} className="px-10 py-4 rounded-2xl bg-slate-800 text-slate-300 font-black text-sm hover:bg-slate-700 transition-all border border-white/10">처음으로</button>
+                        <button onClick={() => { fetch('/reset', {method:'POST'}); window.location.reload(); }} className="px-10 py-4 rounded-2xl bg-blue-600 text-white font-black text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-500/30">새 매뉴얼</button>
                     </div>
                 </div>
             </div>
         );
     }
 
-    /* ── PC 메인 뷰 ── */
+    /* ── PC 메인 코칭 뷰 ── */
     function PCView() {
-        const [view, setView]                       = useState('landing');
-        const [status, setStatus]                   = useState({ ai_response:'대기 중...', manual_steps:[], current_step_idx:0, has_frame:false, analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload' });
-        const [uploading, setUploading]             = useState(false);
+        const [view, setView] = useState('landing');
+        const [status, setStatus] = useState({ ai_response:'대기 중...', manual_steps:[], current_step_idx:0, has_frame:false, analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload', current_fps:0, last_rtt:0 });
+        const [uploading, setUploading] = useState(false);
         const [userSelectedIdx, setUserSelectedIdx] = useState(null);
-        const [flashKey, setFlashKey]               = useState(0);
-        const [modalImg, setModalImg]               = useState(null);    // [개선 2]
-        const [showComplete, setShowComplete]       = useState(false);   // [개선 3]
-        const [isDragging, setIsDragging]           = useState(false);    // 드래그앤드롭
-        const [ttsOn, setTtsOn]                     = useState(true);      // TTS 토글
-        const [settingsOpen, setSettingsOpen]       = useState(false);    // 설정 패널
-        const [isAnalyzing, setIsAnalyzing]         = useState(false);    // VLM 분석 상태
+        const [modalImg, setModalImg] = useState(null);
+        const [showComplete, setShowComplete] = useState(false);
+        const [ttsOn, setTtsOn] = useState(true);
+        const [isAnalyzing, setIsAnalyzing] = useState(false);
+        const inputRef = useRef(null);
+        const listRef = useRef(null);
+        const stepRefs = useRef([]);
 
-        const inputRef  = useRef(null);
-        const listRef   = useRef(null);   // [개선 4]
-        const stepRefs  = useRef([]);     // [개선 4]
-        const prevAiResponse = useRef(''); // TTS: 이전 ai_response 추적
-        const prevActiveIdx  = useRef(0);  // TTS: 이전 단계 추적
-
-        /* 상태 폴링 */
         useEffect(() => {
             const timer = setInterval(async () => {
                 try {
-                    const res  = await fetch('/status');
+                    const res = await fetch('/status');
                     const data = await res.json();
                     setStatus(data);
-                    // upload 중 분석 완료 시만 자동 전환 (landing은 사용자가 직접 선택)
                     if (data.is_analyzed && data.manual_steps?.length > 0 && view === 'upload' && !uploading) {
                         setView('coach');
                     }
@@ -325,515 +237,194 @@
             return () => clearInterval(timer);
         }, [view, uploading]);
 
-        /* VLM 분석 트리거 함수 */
-        const triggerVLM = useCallback(async () => {
-            if (isAnalyzing || !status.has_frame) return;
-            setIsAnalyzing(true);
-            try {
-                const res = await fetch('/trigger-vlm', { method: 'POST' });
-                const data = await res.json();
-                
-                if (data.status === 'success') {
-                    console.log("VLM 분석 성공:", data);
-                    // AI가 자동으로 단계를 넘겼을 수 있으므로 UI 동기화를 위해 수동 락 해제
-                    if (data.prediction.result === "PASS" && !status.step_locked && userSelectedIdx !== null) {
-                        setUserSelectedIdx(null);
-                    }
-                } else {
-                    alert(data.message || "VLM 분석에 실패했습니다.");
-                }
-            } catch (error) {
-                console.error("VLM 서버 요청 오류:", error);
-                alert("서버 통신 중 오류가 발생했습니다.");
-            } finally {
-                setIsAnalyzing(false);
-            }
-        }, [isAnalyzing, status.has_frame, status.step_locked, userSelectedIdx]);
-
-        /* 업로드 공통 처리 (클릭 + 드래그 공용) */
-        const uploadFiles = useCallback(async (files) => {
+        const uploadFiles = async (files) => {
             if (!files || !files.length) return;
-            setUploading(true);
-            setView('upload');
+            setUploading(true); setView('upload');
             const fd = new FormData();
             for (let f of files) fd.append('files', f);
-            try {
-                const res  = await fetch('/process-manual', { method:'POST', body:fd });
-                const data = await res.json();
-                if (data.status === 'success') setUploading(false);
-            } catch(e) { setUploading(false); setView('landing'); }
-        }, []);
+            try { await fetch('/process-manual', { method:'POST', body:fd }); setUploading(false); }
+            catch(e) { setUploading(false); setView('landing'); }
+        };
 
-        const onUpload = (e) => uploadFiles(e.target.files);
+        const triggerVLM = async () => {
+            if (isAnalyzing || !status.has_frame) return;
+            setIsAnalyzing(true);
+            try { await fetch('/trigger-vlm', { method: 'POST' }); }
+            finally { setIsAnalyzing(false); }
+        };
 
-        /* 드래그앤드롭 핸들러 */
-        const onDragOver  = useCallback((e) => { e.preventDefault(); setIsDragging(true); }, []);
-        const onDragLeave = useCallback((e) => { e.preventDefault(); setIsDragging(false); }, []);
-        const onDrop      = useCallback((e) => {
-            e.preventDefault();
-            setIsDragging(false);
-            const files = e.dataTransfer.files;
-            if (files.length) uploadFiles(files);
-        }, [uploadFiles]);
+        const activeIdx = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
+        const currentStep = status.manual_steps[activeIdx];
+        const totalSteps = status.manual_steps.length;
 
-        const totalSteps  = status.manual_steps?.length || 0;
-        const activeIdx   = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
-        const currentStep = totalSteps > 0 ? status.manual_steps[activeIdx] : null;
-
-        /* [개선 4] activeIdx 바뀔 때마다 해당 카드로 부드럽게 스크롤 */
-        useEffect(() => {
-            if (view !== 'coach') return;
-            const el = stepRefs.current[activeIdx];
-            if (el && listRef.current) {
-                el.scrollIntoView({ behavior:'smooth', block:'nearest' });
-            }
-        }, [activeIdx, view]);
-
-        /* 강제 이동 */
-        const forceSetStep = useCallback(async (newIdx) => {
+        const forceSetStep = async (newIdx) => {
             const clamped = Math.max(0, Math.min(newIdx, totalSteps - 1));
             setUserSelectedIdx(clamped);
-            setFlashKey(k => k + 1);
-            try {
-                await fetch('/set-step', {
-                    method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({ idx:clamped, locked:true })
-                });
-            } catch(e) {}
-        }, [totalSteps]);
+            await fetch('/set-step', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ idx:clamped, locked:true }) });
+        };
 
-        const goToPrev = useCallback(() => {
-            const cur = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
-            forceSetStep(cur - 1);
-        }, [userSelectedIdx, status.current_step_idx, forceSetStep]);
-
-        /* [개선 3] 마지막 단계에서 NEXT → 완료 화면 표시 */
-        const goToNext = useCallback(() => {
-            const cur = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
-            if (cur >= totalSteps - 1) { setShowComplete(true); }
-            else { forceSetStep(cur + 1); }
-        }, [userSelectedIdx, status.current_step_idx, totalSteps, forceSetStep]);
-
-        /* 홈으로 이동 (업로드/코칭 → 랜딩) */
-        const goHome = useCallback(async () => {
-            await fetch('/reset', { method: 'POST' }); // ✨ 백엔드 초기화 호출 추가!
-            setView('landing');
-            setUploading(false);
-            setUserSelectedIdx(null);
-            setShowComplete(false);
-            setModalImg(null);  
-        }, []);
-
-        /* AI 추적 모드 복귀 */
-        const returnToAI = useCallback(async () => {
-            setUserSelectedIdx(null);
-            try {
-                await fetch('/set-step', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ idx:status.current_step_idx, locked:false }) });
-            } catch(e) {}
-        }, [status.current_step_idx]);
-
-        /* TTS: ai_response가 실제로 바뀔 때만 읽기 */
-        useEffect(() => {
-            if (view !== 'coach') return;
-            if (!ttsOn) return;
-            if (!status.has_frame) return;
-            const text = status.ai_response;
-            if (!text || text === prevAiResponse.current) return;
-            prevAiResponse.current = text;
-
-            // "[WAIT]..." 같은 태그 제거하고 읽기
-            const clean = text.replace(/^\[\w+\]\s*/, '').trim();
-            if (!clean) return;
-
-            window.speechSynthesis.cancel();
-            const utt = new SpeechSynthesisUtterance(clean);
-            utt.lang = 'ko-KR';
-            utt.rate = 1.05;
-            window.speechSynthesis.speak(utt);
-        }, [status.ai_response, status.has_frame, view]);
-
-        /* TTS: 단계 이동 시 "STEP N 시작합니다" 읽기 */
-        useEffect(() => {
-            if (view !== 'coach') return;
-            if (!ttsOn) return;
-            if (activeIdx === prevActiveIdx.current) return;
-            prevActiveIdx.current = activeIdx;
-
-            const stepTitle = status.manual_steps[activeIdx]?.title || '';
-            const msg = stepTitle ? `${stepTitle} 시작합니다.` : `${activeIdx + 1}단계 시작합니다.`;
-
-            window.speechSynthesis.cancel();
-            const utt = new SpeechSynthesisUtterance(msg);
-            utt.lang = 'ko-KR';
-            utt.rate = 1.05;
-            window.speechSynthesis.speak(utt);
-        }, [activeIdx, view]);
-
-        /* 설정 팝업 외부 클릭 시 닫기 */
-        useEffect(() => {
-            if (!settingsOpen) return;
-            const h = (e) => setSettingsOpen(false);
-            // 다음 tick에 등록해서 버튼 클릭과 충돌 방지
-            const t = setTimeout(() => window.addEventListener('click', h), 0);
-            return () => { clearTimeout(t); window.removeEventListener('click', h); };
-        }, [settingsOpen]);
-
-        /* [개선] 키보드 ←→ 단축키 */
-        useEffect(() => {
-            if (view !== 'coach') return;
-            const h = (e) => {
-                if (modalImg) return;
-                if (e.key === 'ArrowRight') goToNext();
-                if (e.key === 'ArrowLeft')  goToPrev();
-            };
-            window.addEventListener('keydown', h);
-            return () => window.removeEventListener('keydown', h);
-        }, [view, goToNext, goToPrev, modalImg]);
-
-        const isFirstStep = activeIdx <= 0;
-        const isLastStep  = activeIdx >= totalSteps - 1;
-        const isLocked    = userSelectedIdx !== null || status.step_locked;
+        const goHome = async () => { await fetch('/reset', { method: 'POST' }); setView('landing'); setUploading(false); setUserSelectedIdx(null); };
 
         return (
-            <div className="min-h-screen bg-[#020617] text-white p-6 flex flex-col items-center justify-center font-sans overflow-hidden">
+    <div className="min-h-screen bg-[#020617] text-white p-6 flex flex-col items-center justify-center overflow-hidden">
+        {/* 1. 완료 팝업 및 이미지 상세 모달 */}
+        {showComplete && <CompletionOverlay totalSteps={totalSteps} onRestart={() => { setShowComplete(false); forceSetStep(0); }} />}
+        {modalImg && (
+            <div className="img-modal-backdrop" onClick={() => setModalImg(null)}>
+                <div className="relative max-w-5xl px-4" onClick={e => e.stopPropagation()}>
+                    <img src={modalImg.src} className="rounded-3xl shadow-2xl w-full border border-white/10" />
+                    <button className="absolute -top-4 -right-4 w-10 h-10 bg-white text-black rounded-full font-black shadow-lg" onClick={() => setModalImg(null)}>✕</button>
+                </div>
+            </div>
+        )}
 
-                {/* [개선 3] 완료 오버레이 */}
-                {showComplete && (
-                    <CompletionOverlay
-                        totalSteps={totalSteps}
-                        onRestart={() => { setShowComplete(false); forceSetStep(0); }}
-                    />
-                )}
-
-                {/* [개선 2] 이미지 모달 */}
-                {modalImg && <ImageModal src={modalImg.src} title={modalImg.title} onClose={() => setModalImg(null)} />}
-
-                {/* 랜딩 */}
-                {view === 'landing' && (
-                    <div className="flex flex-col items-center gap-8 animate-in fade-in zoom-in duration-700">
-                        {/* 타이틀 */}
-                        <div className="text-center">
-                            <h1 className="text-8xl font-black mb-4 italic tracking-tighter bg-gradient-to-br from-blue-400 via-white to-blue-600 bg-clip-text text-transparent uppercase">
-                                Assembly Coach
-                            </h1>
-                            <p className="text-slate-400 text-xl font-medium tracking-wide">AI 기반 지능형 조립 가이드 시스템</p>
-                        </div>
-
-                        {/* 세션 복원 카드 — 이전 세션이 있을 때만 표시 */}
-                        {status.is_analyzed && status.manual_steps?.length > 0 && (
-                            <div className="glass rounded-[2rem] p-6 w-full max-w-lg border border-emerald-500/20 shadow-xl shadow-emerald-500/5 animate-in slide-in-from-bottom-4 duration-500">
-                                <div className="flex items-start gap-4">
-                                    {/* 아이콘 */}
-                                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center flex-shrink-0 text-2xl">
-                                        🔖
-                                    </div>
-                                    {/* 내용 */}
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">이전 세션 발견</span>
-                                            <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20 font-bold">
-                                                {status.analysis_time}s 분석됨
-                                            </span>
-                                        </div>
-                                        <p className="text-white font-black text-lg leading-tight mb-1 truncate">
-                                            {status.manual_steps[status.current_step_idx]?.title || '조립 매뉴얼'}
-                                        </p>
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
-                                                <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full"
-                                                    style={{ width: `${((status.current_step_idx + 1) / status.manual_steps.length) * 100}%` }} />
-                                            </div>
-                                            <span className="text-[11px] font-black text-slate-400 font-mono flex-shrink-0">
-                                                STEP {status.current_step_idx + 1} / {status.manual_steps.length}
-                                            </span>
-                                        </div>
-                                        {/* 버튼 */}
-                                        <div className="flex gap-3">
-                                            <button
-                                                onClick={() => setView('coach')}
-                                                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm transition-all shadow-lg shadow-emerald-500/25">
-                                                이어서 계속하기 →
-                                            </button>
-                                            <button
-    onClick={async () => {
-        await fetch('/reset', { method: 'POST' }); // ✨ 초기화 추가
-        setView('upload');
-    }}
-    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white font-black text-sm transition-all border border-white/6">
-    새로 시작
-</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* 기본 시작 버튼 — 세션 없을 때 */}
-                        {!status.is_analyzed && (
-                            <button onClick={() => setView('upload')}
-                                className="bg-blue-600 text-white px-16 py-6 rounded-3xl font-black text-2xl hover:scale-105 transition-all shadow-2xl shadow-blue-500/40 active:scale-95">
-                                가이드 시작하기
-                            </button>
-                        )}
+        {/* 2. 랜딩 페이지 (시작 화면) */}
+        {view === 'landing' && (
+            <div className="flex flex-col items-center gap-10 animate-in fade-in duration-700">
+                <h1 className="text-8xl font-black italic tracking-tighter uppercase opacity-90">Start</h1>
+                <div className="flex gap-6 w-full max-w-4xl px-10">
+                    <div className="flex-1 glass p-10 rounded-[3rem] text-center border border-white/5 hover:border-blue-500 transition-all cursor-pointer"
+                        onClick={() => { fetch('/reset', {method:'POST'}); setView('upload'); }}>
+                        <div className="text-6xl mb-6">📁</div>
+                        <h2 className="text-2xl font-black mb-2 uppercase">New Guide</h2>
+                        <p className="text-slate-500 text-sm">새 매뉴얼 업로드</p>
                     </div>
-                )}
-
-                {/* [개선 1] 업로드 — 분석 중이면 단계 진행 표시, 아니면 업로드 UI */}
-                {view === 'upload' && (
-                    uploading
-                        ? <UploadProgress status={status} onCancel={goHome} />
-                        : (
-                            <div className="w-full max-w-xl glass p-10 rounded-[3rem] text-center shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
-                                <h2 className="text-4xl font-black mb-6 text-blue-400">매뉴얼 분석</h2>
-                                <p className="text-slate-400 mb-8">AI가 이미지와 지시문을 정밀하게 추출합니다.</p>
-                                <div
-                                    onClick={() => inputRef.current.click()}
-                                    onDragOver={onDragOver}
-                                    onDragLeave={onDragLeave}
-                                    onDrop={onDrop}
-                                    className={`border-4 border-dashed rounded-[2.5rem] p-16 cursor-pointer transition-all duration-200 ${
-                                        isDragging
-                                            ? 'border-blue-500 bg-blue-500/10 scale-[1.02]'
-                                            : 'border-slate-800 hover:bg-slate-900/50 hover:border-blue-500/30'
-                                    }`}>
-                                    <div className="space-y-4">
-                                        <div className="text-6xl mb-4">{isDragging ? '📂' : '📁'}</div>
-                                        <p className="text-slate-300 text-xl font-bold italic">
-                                            {isDragging ? '여기에 놓으세요!' : '파일을 클릭하거나 드래그하세요'}
-                                        </p>
-                                        <p className="text-slate-500 text-sm">PDF 또는 이미지 (지시문 포함 권장)</p>
-                                    </div>
-                                </div>
-                                <input type="file" multiple ref={inputRef} onChange={onUpload} className="hidden" accept=".pdf,image/*" />
-                            </div>
-                        )
-                )}
-
-                {/* 코치 화면 */}
-                {view === 'coach' && (
-                    <div className="w-full max-w-[1700px] flex gap-8 h-[88vh] animate-in fade-in duration-1000">
-
-                        {/* 왼쪽: 가이드 리스트 + 하단 버튼 */}
-                        <div className="w-1/4 flex flex-col gap-3">
-                        <div className="flex-1 glass rounded-[3rem] p-6 flex flex-col shadow-2xl border border-white/5 overflow-hidden min-h-0">
-                            <div className="flex justify-between items-center mb-6 px-2 flex-shrink-0">
-                                <h2 className="text-2xl font-black italic text-blue-400 uppercase tracking-tighter">Guide Steps</h2>
-                                <span className="bg-slate-900 px-3 py-1 rounded-full text-[10px] font-mono text-emerald-400 border border-emerald-500/20">
-                                    {status.analysis_time}s
-                                </span>
-                            </div>
-
-                            {/* [개선 4] listRef + stepRefs로 자동 스크롤 */}
-                            <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
-                                {status.manual_steps?.map((s, i) => (
-                                    <div
-                                        key={i}
-                                        ref={el => stepRefs.current[i] = el}
-                                        onClick={() => forceSetStep(i)}
-                                        className={`p-5 rounded-[2rem] clickable step-card border ${
-                                            i === activeIdx ? 'active-user-step border-transparent' : 'bg-slate-900/40 border-white/5 opacity-60 hover:opacity-100'
-                                        } ${i === status.current_step_idx ? 'ring-2 ring-emerald-500' : ''}`}
-                                    >
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="text-[10px] font-black opacity-70 uppercase tracking-widest">STEP {s.step}</span>
-                                            {i === status.current_step_idx && (
-                                                <span className="text-[9px] bg-emerald-500 text-white px-2 py-0.5 rounded-full animate-pulse font-black">AI FOCUS</span>
-                                            )}
-                                        </div>
-                                        <p className="text-base font-bold leading-tight break-keep">{s.title}</p>
-                                    </div>
-                                ))}
-                            </div>
-
-                        </div>{/* 왼쪽 패널 닫힘 */}
-
-                            {/* ── 하단: 홈 + 설정 — Vision Analytics와 수평 정렬 ── */}
-                            <div className="flex gap-3 flex-shrink-0 relative">
-                                {/* 홈 버튼 */}
-                                <button onClick={goHome}
-                                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-[1.5rem] bg-slate-900/70 border border-white/6 text-slate-400 hover:text-white hover:bg-slate-800 hover:border-white/15 transition-all group">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-                                        className="group-hover:stroke-white transition-colors">
-                                        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
-                                    </svg>
-                                    <span className="text-[12px] font-black uppercase tracking-widest">홈</span>
-                                </button>
-
-                                {/* 설정 버튼 + 팝업 */}
-                                <div className="relative flex-1">
-                                    <button onClick={() => setSettingsOpen(v => !v)}
-                                        className={`w-full flex items-center justify-center gap-2 py-4 rounded-[1.5rem] border transition-all group ${settingsOpen ? 'bg-blue-600/15 border-blue-500/30 text-blue-400' : 'bg-slate-900/70 border-white/6 text-slate-400 hover:text-white hover:bg-slate-800 hover:border-white/15'}`}>
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-                                            style={settingsOpen ? {animation:'spin-slow 3s linear infinite'} : {}}>
-                                            <circle cx="12" cy="12" r="3"/>
-                                            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-                                        </svg>
-                                        <span className="text-[12px] font-black uppercase tracking-widest">설정</span>
-                                    </button>
-
-                                    {/* 팝업 — 버튼 위로 */}
-                                    {settingsOpen && (
-                                        <div className="settings-popup glass rounded-[1.5rem] p-4 border border-white/8 shadow-2xl"
-                                            onClick={e => e.stopPropagation()}>
-                                            <div style={{position:'absolute',bottom:'-6px',right:'22px',width:'12px',height:'12px',background:'rgba(15,23,42,0.92)',borderRight:'1px solid rgba(255,255,255,0.08)',borderBottom:'1px solid rgba(255,255,255,0.08)',transform:'rotate(45deg)'}} />
-                                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-3 px-1">설정</p>
-                                            <button
-                                                onClick={() => { setTtsOn(v => !v); window.speechSynthesis.cancel(); }}
-                                                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-slate-800/60 transition-all">
-                                                <div className="flex items-center gap-2.5">
-                                                    <span className="text-base">{ttsOn ? '🔊' : '🔇'}</span>
-                                                    <div className="text-left">
-                                                        <p className="text-[12px] font-black text-white leading-none mb-0.5">음성 안내</p>
-                                                        <p className="text-[10px] text-slate-500">TTS 켜기 / 끄기</p>
-                                                    </div>
-                                                </div>
-                                                <div className={`w-9 h-5 rounded-full transition-all duration-300 relative flex-shrink-0 ml-3 ${ttsOn ? 'bg-blue-600' : 'bg-slate-700'}`}>
-                                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-300 ${ttsOn ? 'left-4' : 'left-0.5'}`} />
-                                                </div>
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>{/* 왼쪽 래퍼 닫힘 */}
-
-                        {/* 중앙: 실시간 시각 피드 — Vision Analytics는 피드 위 오버레이 */}
-                        <div className="flex-1 flex flex-col">
-                            <div className="flex-1 glass rounded-[4rem] overflow-hidden relative shadow-2xl bg-black border-4 border-slate-900/50">
-                                {status.has_frame ? (
-                                    <img src="/stream" className="w-full h-full object-contain" alt="Live Stream" />
-                                ) : (
-                                    <div className="w-full h-full flex flex-col items-center justify-center bg-[#010409]">
-                                        <div className="w-20 h-20 border-4 border-slate-800 border-t-blue-600 rounded-full animate-spin mb-6"></div>
-                                        <p className="text-xl font-bold text-slate-600 italic tracking-widest uppercase mb-4">Awaiting Stream</p>
-                                        <div className="px-6 py-2 bg-blue-600/10 rounded-full border border-blue-500/20">
-                                            <code className="text-xs text-blue-400 font-bold">{window.location.host}/mobile</code>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Vision Analytics 오버레이 및 VLM 분석 버튼 */}
-                                <div className="absolute bottom-0 left-0 right-0 px-8 py-6 flex items-end justify-between"
-                                    style={{background:'linear-gradient(to top, rgba(2,6,23,0.95) 0%, rgba(2,6,23,0.6) 60%, transparent 100%)'}}>
-                                    
-                                    <div className="flex-1 mr-4">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <div className={`w-2 h-2 rounded-full ${isAnalyzing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500 animate-ping'}`}></div>
-                                            <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest font-mono">
-                                                {isAnalyzing ? 'Vision Analytics (분석 중...)' : 'Vision Analytics'}
-                                            </span>
-                                        </div>
-                                        <p className="text-xl font-black leading-snug text-white/95 break-keep">
-                                            {status.has_frame ? status.ai_response : "모바일 기기를 연결하여 실시간 코칭을 받으세요."}
-                                        </p>
-                                    </div>
-
-                                    {/* VLM 수동 분석 버튼 추가 */}
-                                    {status.has_frame && (
-                                        <button 
-                                            onClick={triggerVLM}
-                                            disabled={isAnalyzing}
-                                            className="flex-shrink-0 px-6 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white font-black text-sm transition-all shadow-lg shadow-blue-500/30 active:scale-95 flex items-center gap-2"
-                                        >
-                                            {isAnalyzing ? (
-                                                <>
-                                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                                    분석 중...
-                                                </>
-                                            ) : (
-                                                <>🔍 VLM 분석</>
-                                            )}
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
+                    {status.is_analyzed && (
+                        <div className="flex-1 glass p-10 rounded-[3rem] text-center border-2 border-emerald-500/30 hover:border-emerald-500 transition-all cursor-pointer"
+                            onClick={() => setView('coach')}>
+                            <div className="text-6xl mb-6">🔖</div>
+                            <h2 className="text-2xl font-black mb-2 uppercase text-emerald-400">Resume</h2>
+                            <p className="text-slate-500 text-sm">STEP {status.current_step_idx + 1}부터 계속</p>
                         </div>
+                    )}
+                </div>
+            </div>
+        )}
 
-                        {/* 오른쪽: 이미지 + 지시문 */}
-                        <div className="w-1/4 flex flex-col gap-4">
-                            <div className="flex-1 glass rounded-[3rem] p-5 flex flex-col shadow-2xl border border-white/5 overflow-hidden min-h-0">
-                                {currentStep ? (
-                                    <div key={flashKey} className="flex-1 flex flex-col gap-3 overflow-hidden step-in min-h-0">
-                                        {/* Step 번호 + 이미지 — 클릭하면 모달 */}
-                                        <div className="relative flex-shrink-0">
-                                            <div
-                                                className="step-img-wrap"
-                                                onClick={() => setModalImg({ src:currentStep.image_url, title:`STEP ${currentStep.step}` })}
-                                                title="클릭하면 크게 볼 수 있습니다"
-                                            >
-                                                <img src={currentStep.image_url} alt="Step Detail" />
-                                            </div>
-                                            {/* Step 번호 뱃지 — 이미지 위 좌상단 */}
-                                            <div className="absolute top-2 left-2 px-3 py-1 bg-slate-900/80 backdrop-blur rounded-full border border-white/10">
-                                                <span className="text-[10px] text-blue-300 font-black uppercase tracking-widest">
-                                                    STEP {currentStep.step}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        {/* 지시문 — 남은 공간 전부 */}
-                                        <div className="flex-1 bg-slate-950/50 rounded-[1.5rem] p-5 border border-white/5 overflow-y-auto custom-scrollbar min-h-0">
-                                            <p className="text-slate-100 leading-relaxed font-normal break-keep text-[15px]">
-                                                {currentStep.desc
-                                                    .replace(/([가-힣a-zA-Z0-9,\.])\n([가-힣a-zA-Z])/g, '$1 $2')
-                                                    .replace(/\n/g, ' ')
-                                                    .trim()}
-                                            </p>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex-1 flex items-center justify-center text-slate-700 italic font-black text-xl uppercase opacity-20">No Data</div>
-                                )}
-                            </div>
-
-                            {/* 단계 이동 컨트롤 */}
-                            <div className="glass rounded-[2.5rem] p-5 border border-white/5 shadow-xl flex-shrink-0">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">단계 이동</span>
-                                    <span className="text-[10px] font-black text-slate-400 font-mono">
-                                        {totalSteps > 0 ? `${activeIdx + 1} / ${totalSteps}` : '- / -'}
-                                    </span>
-                                </div>
-                                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mb-4">
-                                    <div className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-300"
-                                        style={{ width: totalSteps > 0 ? `${((activeIdx+1)/totalSteps)*100}%` : '0%' }} />
-                                </div>
-
-                                <div className="flex gap-3">
-                                    <button onClick={goToPrev} disabled={isFirstStep || totalSteps === 0} className="nav-btn nav-btn-prev">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                                        PREV
-                                    </button>
-                                    {/* [개선 3] 마지막 단계면 초록 완료 버튼으로 변환 */}
-                                    <button onClick={goToNext} disabled={totalSteps === 0} className="nav-btn nav-btn-next"
-                                        style={isLastStep ? {background:'linear-gradient(135deg,#059669,#047857)',boxShadow:'0 8px 20px rgba(5,150,105,0.4)'} : {}}>
-                                        {isLastStep ? '🏁 완료' : <>NEXT <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></>}
-                                    </button>
-                                </div>
-
-                                {/* 키보드 힌트 + AI 상태 한 줄 */}
-                                <div className="flex items-center justify-between mt-3">
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="kbd">←</span>
-                                        <span className="kbd">→</span>
-                                        <span className="text-[9px] text-slate-600 ml-1">키보드</span>
-                                    </div>
-                                    <p className="text-[9px] font-bold uppercase tracking-widest"
-                                        style={{ color: isLocked ? '#f59e0b' : '#10b981' }}>
-                                        {isLocked ? "⚡ 수동 제어 중" : "🤖 AI 자동 추적"}
-                                    </p>
-                                </div>
-                            </div>
-
-                        </div>
+        {/* 3. 업로드 및 분석 대기 화면 */}
+        {view === 'upload' && (
+            <div className="w-full flex items-center justify-center">
+                {uploading ? <UploadProgress status={status} onCancel={goHome} /> : (
+                    <div className="glass p-20 rounded-[4rem] text-center border-2 border-dashed border-slate-700 hover:border-blue-500 cursor-pointer" onClick={() => inputRef.current.click()}>
+                        <div className="text-8xl mb-6">📄</div>
+                        <h2 className="text-4xl font-black mb-4 uppercase">Select Manual</h2>
+                        <input type="file" multiple ref={inputRef} onChange={(e) => uploadFiles(e.target.files)} className="hidden" accept=".pdf,image/*" />
                     </div>
                 )}
             </div>
-        );
+        )}
+
+        {/* 4. 메인 코칭 화면 (카메라 및 가이드) */}
+        {view === 'coach' && (
+            <div className="w-full max-w-[1700px] flex gap-8 h-[88vh] animate-in fade-in duration-1000">
+                
+                {/* [왼쪽] 단계 리스트 */}
+                <div className="w-1/4 flex flex-col gap-3">
+                    <div className="flex-1 glass rounded-[3rem] p-6 flex flex-col border border-white/5 overflow-hidden">
+                        <h2 className="text-2xl font-black italic text-blue-400 uppercase tracking-tighter mb-6">Steps</h2>
+                        <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
+                            {status.manual_steps.map((s, i) => (
+                                <div key={i} ref={el => stepRefs.current[i] = el} onClick={() => forceSetStep(i)}
+                                    className={`p-5 rounded-[2rem] clickable border ${i === activeIdx ? 'active-user-step border-transparent' : 'bg-slate-900/40 border-white/5 opacity-60'}`}>
+                                    <span className="text-[10px] font-black opacity-70 uppercase tracking-widest">STEP {s.step}</span>
+                                    <p className="text-base font-bold leading-tight break-keep">{s.title}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <button onClick={goHome} className="py-4 rounded-[1.5rem] bg-slate-900/70 border border-white/6 text-slate-400 font-black uppercase text-xs">홈으로</button>
+                </div>
+
+                {/* [중앙] 메인 영상 피드 (크기 확대 및 카메라 연결) */}
+                {/* [중앙] 메인 영상 피드 (크기 확대 및 카메라 연결) */}
+<div className="flex-1 flex flex-col justify-center items-center">
+    <div className="video-fixed-ratio">
+        {status.has_frame ? (
+            /* ✨ 여기에 -scale-x-100 을 다시 확실하게 넣어줍니다! */
+            <img src="/stream" className="-scale-x-100 w-full h-full object-cover" alt="Live Feed" />
+        ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 bg-slate-950">
+                <div className="w-16 h-16 border-4 border-slate-800 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+                <p className="font-black italic text-2xl uppercase tracking-tighter text-center px-10">Awaiting Hardware Feed...</p>
+            </div>
+                        )}
+
+                        {/* 영상 위 지표(OSD) */}
+                        <div className="absolute top-8 left-8 flex gap-4 z-20">
+                            <div className="glass px-4 py-2 rounded-2xl text-xs font-mono text-slate-200 border-white/5 osd-shadow">
+                                FPS: {Math.round(status.current_fps)}
+                            </div>
+                            <div className="glass px-4 py-2 rounded-2xl text-xs font-mono text-slate-200 border-white/5 osd-shadow">
+                                ABS: {Math.round(status.last_rtt/2)}ms
+                            </div>
+                        </div>
+
+                        {/* VLM 분석 버튼 */}
+                        {status.has_frame && (
+                            <button onClick={triggerVLM} disabled={isAnalyzing} 
+                                className="absolute top-8 right-8 px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black shadow-2xl transition-all active:scale-95 disabled:bg-slate-800 z-20">
+                                {isAnalyzing ? 'ANALYZING...' : '🔍 VLM 분석'}
+                            </button>
+                        )}
+                    </div>
+                    
+                    {/* AI 코칭 응답 섹션 */}
+                    <div className="w-full max-w-[1400px] mt-4 glass p-8 rounded-[3rem] border border-white/5">
+                        <p className="text-blue-400 font-bold text-xs uppercase mb-2">AI Coaching</p>
+                        <p className="text-4xl font-black leading-tight break-keep">{status.ai_response}</p>
+                    </div>
+                </div>
+
+                {/* [오른쪽] 가이드 정보 및 네비게이션 */}
+                <div className="w-1/4 flex flex-col gap-4">
+                    <div className="flex-1 glass rounded-[3rem] p-5 flex flex-col border border-white/5 overflow-hidden">
+                        {currentStep ? (
+                            <div className="flex-1 flex flex-col gap-3 overflow-hidden">
+                                <div className="step-img-wrap" onClick={() => setModalImg({ src:currentStep.image_url, title:`STEP ${currentStep.step}` })}>
+                                    <img src={currentStep.image_url} alt="Step Guide" />
+                                </div>
+                                <div className="flex-1 bg-slate-950/50 rounded-[1.5rem] p-5 border border-white/5 overflow-y-auto custom-scrollbar">
+                                    <p className="text-blue-300 font-black uppercase text-[10px] tracking-widest mb-1">STEP {currentStep.step}</p>
+                                    <p className="text-slate-100 leading-relaxed break-keep text-[15px]">{currentStep.desc}</p>
+                                </div>
+                            </div>
+                        ) : <div className="flex-1 flex items-center justify-center text-slate-800 font-black italic">No Data</div>}
+                    </div>
+                    
+                    {/* 컨트롤 버튼 */}
+                    <div className="glass rounded-[2.5rem] p-5 border border-white/5 shadow-xl flex flex-col gap-3">
+                        <div className="flex gap-3">
+                            <button onClick={() => forceSetStep(activeIdx - 1)} disabled={activeIdx === 0} className="nav-btn nav-btn-prev">PREV</button>
+                            <button onClick={() => (activeIdx >= totalSteps - 1 ? setShowComplete(true) : forceSetStep(activeIdx + 1))} className="nav-btn nav-btn-next">
+                                {activeIdx >= totalSteps - 1 ? 'FINISH' : 'NEXT'}
+                            </button>
+                        </div>
+                        <div className="flex justify-between px-2 text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                            <span>{userSelectedIdx !== null ? "⚡ 수동 모드" : "🤖 AI 추적 중"}</span>
+                            <span>{activeIdx + 1} / {totalSteps}</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        )}
+    </div>
+);
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    /* ── [핵심] 분기 처리 로직 ── */
+    /* ── [수정] index.html의 맨 마지막 AppWrapper 부분 ── */
+
+function AppWrapper() {
+    // 주소창에 /mobile 이 포함되어 있는지 확인
+    const isMobilePath = window.location.pathname.includes('/mobile');
+    
+    // 모바일 경로면 MobileView(송출기)를, 아니면 PCView(코치)를 보여줌
+    return isMobilePath ? <MobileView /> : <PCView />;
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<AppWrapper />);
 </script>
 </body>
 </html>

@@ -11,6 +11,9 @@ import re
 import subprocess
 import cv2
 import numpy as np
+import socket
+import math
+import mediapipe as mp
 from typing import List
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, Form
@@ -51,6 +54,31 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# ─── [하드웨어 제어: ESP32 설정 및 상태 추가] ─────────────────────────────
+ESP32_IP = "192.168.137.182" 
+UDP_PORT = 12345           
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+hw_state = {
+    "PAN_MIN_LIMIT": 40.0, "PAN_MAX_LIMIT": 140.0,
+    "TILT_MIN_LIMIT": 50.0, "TILT_MAX_LIMIT": 100.0,
+    "current_pan": 90.0, "current_tilt": 90.0,
+    "smooth_pan": 90.0, "smooth_tilt": 90.0,
+    "is_servo_active": True,
+    "current_stepper_state": "STOP",
+    "gesture_hold_start": 0,
+    "HOLD_THRESHOLD": 0.5
+}
+
+# ─── [MediaPipe 초기화 추가] ──────────────────────────────────────────
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    max_num_hands=1,
+    model_complexity=0,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+
 # --- [시스템 상태 관리] ---
 state = {
     "latest_frame": None,
@@ -63,6 +91,7 @@ state = {
     "is_coaching_active": False,
     "step_locked": False,
     "progress_step": "upload",
+    "is_processing": False, # [추가] 하드웨어 연산 중복 방지
     # WebRTC 추가 지표
     "client_send_time": 0.0,
     "last_rtt": 0.0,
@@ -71,6 +100,7 @@ state = {
 }
 
 prev_frame_time = 0.0
+frame_count = 0 # [추가] 하드웨어 연산 프레임 스킵용
 SESSION_FILE = os.path.join(OUTPUT_DIR, "last_session.json")
 
 # ─── 세션 저장/복원 ──────────────────────────────────────────────────────────
@@ -115,6 +145,72 @@ def load_session() -> bool:
     except Exception as e:
         print(f"⚠️ 세션 복원 실패: {e}")
         return False
+
+# ─── [하드웨어 제어 보조 함수 추가] ─────────────────────────────────────
+def calculate_servo_angles(hx, hy):
+    dist_x, dist_y = hx - 0.5, hy - 0.5
+    if abs(dist_x) < 0.15 and abs(dist_y) < 0.15:
+        hw_state["current_pan"], hw_state["current_tilt"] = hw_state["smooth_pan"], hw_state["smooth_tilt"]
+    else:
+        hw_state["current_pan"] += (dist_x * 4.0)
+        hw_state["current_tilt"] += (dist_y * 4.0)
+    
+    hw_state["current_pan"] = max(hw_state["PAN_MIN_LIMIT"], min(hw_state["PAN_MAX_LIMIT"], hw_state["current_pan"]))
+    hw_state["current_tilt"] = max(hw_state["TILT_MIN_LIMIT"], min(hw_state["TILT_MAX_LIMIT"], hw_state["current_tilt"]))
+    hw_state["smooth_pan"] = (hw_state["smooth_pan"] * 0.8) + (hw_state["current_pan"] * 0.2)
+    hw_state["smooth_tilt"] = (hw_state["smooth_tilt"] * 0.8) + (hw_state["current_tilt"] * 0.2)
+
+def get_finger_status(hand_lms):
+    fingers = []
+    wrist = hand_lms.landmark[0]
+    for tip, pip in zip([8, 12, 16, 20], [6, 10, 14, 18]):
+        dist_tip = math.sqrt((hand_lms.landmark[tip].x - wrist.x)**2 + (hand_lms.landmark[tip].y - wrist.y)**2)
+        dist_pip = math.sqrt((hand_lms.landmark[pip].x - wrist.x)**2 + (hand_lms.landmark[pip].y - wrist.y)**2)
+        fingers.append(dist_tip > dist_pip)
+    return fingers
+
+# ─── [핵심 하드웨어 연산 함수 추가] ──────────────────────────
+def heavy_processing(img_bgr):
+    # 1. 가로/세로 감지 및 자동 회전 (가로 모드 고정)
+    h, w = img_bgr.shape[:2]
+    
+    # 🚀 휴대폰이 세로로 데이터를 보내면(h > w), 가로로 90도 회전시킴
+    if h > w: 
+        img_bgr = cv2.rotate(img_bgr, cv2.ROTATE_90_CLOCKWISE)
+        h, w = img_bgr.shape[:2] # 회전 후 바뀐 크기(가로가 더 길어짐)를 다시 저장
+
+    detected_stepper_cmd = "NONE"
+
+    # 최적화: 320px 리사이즈 이미지로 MediaPipe 실행
+    mp_input = cv2.resize(img_bgr, (320, 240))
+    results = hands.process(cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB))
+    
+    if results.multi_hand_landmarks and results.multi_handedness:
+        for idx, hand_info in enumerate(results.multi_handedness):
+            if hand_info.classification[0].label == "Right":
+                hand_lms = results.multi_hand_landmarks[idx]
+                hx, hy = hand_lms.landmark[8].x, hand_lms.landmark[8].y
+                
+                if hw_state["is_servo_active"]:
+                    calculate_servo_angles(hx, hy) 
+                    servo_msg = f"P{hw_state['smooth_pan']:.1f}T{hw_state['smooth_tilt']:.1f}"
+                    sock.sendto(servo_msg.encode(), (ESP32_IP, UDP_PORT))
+
+                f_status = get_finger_status(hand_lms)
+                if f_status == [False, False, False, False]:
+                    detected_stepper_cmd = "STOP"
+                elif f_status == [True, True, False, False]: 
+                    detected_stepper_cmd = "DOWN" if hand_lms.landmark[8].y < hand_lms.landmark[0].y else "UP"
+
+    # 최종 스트리밍용 인코딩
+    # 3. 브라우저 송출용 최종 리사이즈 및 화질 최적화
+    # 🚀 브라우저에서 꽉 찬 16:9 화면을 보기 위해 1280x720으로 고정
+    img_resized = cv2.resize(img_bgr, (1280, 720), interpolation=cv2.INTER_LINEAR)
+    
+    # 화질을 85로 올려 선명도 확보 (VLM 분석에도 유리함)
+    _, buffer = cv2.imencode('.jpg', img_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    
+    return buffer.tobytes(), detected_stepper_cmd
 
 # --- [실시간 코칭 인퍼런스 서버 통신] ---
 async def call_runpod_inference(manual_img_path, camera_frame_bytes):
@@ -356,7 +452,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
                 if right <= left or bottom <= top:
                     continue
 
-                crop     = full_img.crop((left, top, right, bottom))
+                crop      = full_img.crop((left, top, right, bottom))
                 step_num = s.get("step_number") or (base_idx + len(steps) + 1)
                 c_path   = os.path.join(job_dir, f"img_step_{step_num}_{int(time.time()*1000)}.jpg")
                 crop.convert("RGB").save(c_path, "JPEG", quality=92)
@@ -465,7 +561,11 @@ async def handle_manual(files: List[UploadFile] = File(...)):
     })
     state["progress_step"] = "done"
     save_session()
-    print(f"✅ [SUCCESS] 분석 완료.")
+    
+    # 여기서 총 걸린 시간을 출력합니다.
+    total_time = state["analysis_time"]
+    print(f"✅ [SUCCESS] 매뉴얼 추출 완료! 총 소요 시간: {total_time}초 (총 {len(final_filtered_steps)}개 STEP)")
+    
     return {"status": "success", "steps": final_filtered_steps}
 
 @app.post("/set-step")
@@ -476,9 +576,6 @@ async def set_step(body: dict):
     state["current_step_idx"], state["step_locked"] = idx, locked
     save_session()
     return {"status": "ok", "current_step_idx": idx, "step_locked": locked}
-
-
-
 
 @app.get("/status")
 async def get_status():
@@ -520,28 +617,35 @@ async def stream():
 @app.post("/trigger-vlm")
 async def trigger_vlm_analysis():
     """프론트엔드에서 'VLM 분석' 버튼을 눌렀을 때 1회 호출되는 엔드포인트"""
-    # 1. 상태 체크 (매뉴얼 로드 및 프레임 수신 여부)
     if not state["is_analyzed"] or not state["manual_steps"]:
         return {"status": "error", "message": "매뉴얼이 아직 준비되지 않았습니다."}
     if not state["latest_frame"]:
         return {"status": "error", "message": "카메라 렌즈를 통해 프레임을 수신하는 중입니다."}
 
-    # 2. 현재 스텝 및 이미지 가져오기
     idx = state["current_step_idx"]
     current_step = state["manual_steps"][idx]
 
-    # 3. GPU 인퍼런스 서버로 전송 (이미 만들어진 함수 재사용)
+    # 👇 VLM 분석 시작 시간 기록 및 로그 출력
+    print(f"🚀 [VLM] STEP {idx + 1} 오픈 도메인 코칭 분석 요청 시작...")
+    vlm_start_time = time.time() 
+
+    # 3. GPU 인퍼런스 서버로 전송
     prediction = await call_runpod_inference(current_step["image_url"], state["latest_frame"])
+
+    # 👇 VLM 분석 종료 시간 기록 및 계산
+    vlm_end_time = time.time()
+    vlm_duration = round(vlm_end_time - vlm_start_time, 2)
 
     # 4. 결과 처리 및 상태 업데이트
     if prediction and prediction.get("result") != "ERROR":
         result_status = prediction.get("result", "UNKNOWN")
         reason = prediction.get("reason", "분석 완료")
         
-        # 전역 상태(Web UI 출력용) 업데이트
         state["ai_response"] = f"[{result_status}] {reason}"
 
-        # 분석 결과가 PASS이고, 사용자가 단계를 고정(lock)하지 않았다면 다음 단계로 자동 이동
+        # 👇 분석 완료 소요 시간 로그 출력
+        print(f"⏱️ [VLM] 분석 완료! 소요 시간: {vlm_duration}초 | 결과: {result_status}")
+
         if result_status == "PASS" and not state["step_locked"]:
             if idx + 1 < len(state["manual_steps"]):
                 state["current_step_idx"] = idx + 1
@@ -550,50 +654,72 @@ async def trigger_vlm_analysis():
         return {
             "status": "success", 
             "prediction": prediction,
-            "current_step": state["current_step_idx"]
+            "current_step": state["current_step_idx"],
+            "vlm_duration": vlm_duration # (선택) 프론트엔드에도 시간 정보를 보내줌
         }
     else:
         err_reason = prediction.get("reason", "알 수 없는 오류") if prediction else "응답 없음"
+        print(f"🚨 [VLM] 에러 발생! 소요 시간: {vlm_duration}초 | 사유: {err_reason}")
         return {"status": "error", "message": f"VLM 통신 실패: {err_reason}"}
 
 # ==========================================
-# 🌟 WebRTC (LiveKit) 영상 처리 파트 추가
+# 🌟 WebRTC (LiveKit) 영상 처리 파트 (하드웨어 제어 포함)
 # ==========================================
 async def process_video_track(track: rtc.VideoTrack):
-    global prev_frame_time
+    global prev_frame_time, frame_count
     video_stream = rtc.VideoStream(track)
-    target_format = rtc.VideoFormatType.FORMAT_RGBA8888 if hasattr(rtc, 'VideoFormatType') else 3
+    loop = asyncio.get_event_loop()
 
-    last_process_time = time.time()
+    # 🚀 [버전 호환성 해결] VideoFormatType 에러 방지
+    try:
+        if hasattr(rtc, 'VideoFormatType'):
+            target_format = rtc.VideoFormatType.FORMAT_RGBA8888
+        else:
+            target_format = rtc.VideoBufferType.RGBA # 최신 버전 대응
+    except:
+        target_format = 3 # RGBA 기본 정수값
 
     async for event in video_stream:
         await asyncio.sleep(0.001)
-
         curr_time = time.time()
+        
         if prev_frame_time > 0:
             diff = curr_time - prev_frame_time
             if diff > 0.01: state["current_fps"] = 1.0 / diff
         prev_frame_time = curr_time
         
-        # 20FPS 리밋 제어
-        if curr_time - last_process_time < 0.05: continue
-        last_process_time = time.time()
+        frame_count += 1
+        if frame_count % 2 != 0: continue # 2프레임 당 1프레임 연산 (최적화)
 
-        frame = event.frame
-        rgba_frame = frame.convert(target_format)
-        img = np.frombuffer(rgba_frame.data, dtype=np.uint8).reshape((rgba_frame.height, rgba_frame.width, 4))
-        img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-        
-        h, w = img_bgr.shape[:2]
-        target_size = 720
-        new_w, new_h = (target_size, int(h * target_size / w)) if h > w else (int(w * target_size / h), target_size)
-        
-        img_resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-        _, buffer = cv2.imencode('.jpg', img_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-        
-        frame_bytes = buffer.tobytes()
-        state["latest_frame"], state["latest_frame_raw"] = frame_bytes, frame_bytes
-        state["log"] = f"📡 720p Stream | FPS: {round(state['current_fps'], 1):4} | ABS: {round(state['last_rtt']/2, 1):5}ms"
+        if state.get("is_processing", False): continue
+        state["is_processing"] = True
+
+        try:
+            # 🚀 영상 데이터를 RGBA -> BGR 변환 및 거울 모드
+            rgba_frame = event.frame.convert(target_format)
+            img = np.frombuffer(rgba_frame.data, dtype=np.uint8).reshape((rgba_frame.height, rgba_frame.width, 4))
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+            #img_bgr = cv2.flip(img_bgr, 1) # 거울 모드
+
+            # 별도 스레드에서 무거운 연산(MediaPipe + 하드웨어 제어) 수행
+            frame_bytes, stepper_cmd = await loop.run_in_executor(None, heavy_processing, img_bgr)
+            
+            # 스테퍼(UP/DOWN/STOP) 제어 명령 UDP 전송
+            if stepper_cmd in ["STOP", "NONE"]:
+                if hw_state["current_stepper_state"] != "STOP":
+                    sock.sendto(b'S', (ESP32_IP, UDP_PORT))
+                    hw_state["current_stepper_state"] = "STOP"
+            elif stepper_cmd in ["UP", "DOWN"]:
+                if stepper_cmd != hw_state["current_stepper_state"]:
+                    sock.sendto(stepper_cmd[0].encode(), (ESP32_IP, UDP_PORT))
+                    hw_state["current_stepper_state"] = stepper_cmd
+
+            state["latest_frame"] = frame_bytes
+            state["log"] = f"📡 Stream | FPS: {round(state['current_fps'], 1):4} | ABS: {round(state['last_rtt']/2, 1):5}ms"
+        except Exception as e:
+            print(f"🚨 영상 처리 오류 상세: {e}")
+        finally:
+            state["is_processing"] = False
 
 async def run_livekit():
     room = rtc.Room()
