@@ -2,18 +2,19 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Assembly Coach - Final Crop</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assembly Coach - WebRTC</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #020617; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; }
-        .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
+        .glass { background: rgba(15, 23, 42, 0.7); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
         .active-step { background: linear-gradient(135deg, #1d4ed8, #2563eb); transform: scale(1.02); box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.5); }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        .stats-badge { position: absolute; top: 1rem; left: 1rem; background: rgba(0,0,0,0.8); color: #4ade80; padding: 0.5rem 1rem; border-radius: 0.5rem; font-family: monospace; font-size: 0.875rem; z-index: 50; border: 1px solid #22c55e;}
     </style>
 </head>
 <body>
@@ -28,55 +29,114 @@
             return isMobile ? <MobileView /> : <PCView />;
         }
 
+        // ================= 모바일 뷰 (WebRTC Sender) =================
         function MobileView() {
             const videoRef = useRef(null);
-            const canvasRef = useRef(null);
-            const wsRef = useRef(null);
             const [connected, setConnected] = useState(false);
+            const [stats, setStats] = useState({ w: 0, h: 0 });
 
             useEffect(() => {
+                let pc = null;
+                let localStream = null;
+
                 const init = async () => {
                     try {
-                        const stream = await navigator.mediaDevices.getUserMedia({
-                            video: { facingMode: 'environment', width: 640, height: 480 },
-                            audio: false
+                        // 1. 카메라 스트림 획득 (720p 최적화)
+                        localStream = await navigator.mediaDevices.getUserMedia({ 
+                            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, 
+                            audio: false 
                         });
-                        if (videoRef.current) videoRef.current.srcObject = stream;
-                        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
-                        wsRef.current = new WebSocket(wsUrl);
-                        wsRef.current.onopen = () => setConnected(true);
-                        wsRef.current.onclose = () => setConnected(false);
+                        
+                        if (videoRef.current) {
+                            videoRef.current.srcObject = localStream;
+                            videoRef.current.onloadedmetadata = () => {
+                                setStats({ w: videoRef.current.videoWidth, h: videoRef.current.videoHeight });
+                            };
+                        }
 
-                        const send = () => {
-                            if (wsRef.current?.readyState === 1 && videoRef.current?.readyState === 4) {
-                                const ctx = canvasRef.current.getContext('2d');
-                                ctx.drawImage(videoRef.current, 0, 0, 640, 480);
-                                canvasRef.current.toBlob(b => {
-                                    if(wsRef.current?.readyState === 1) wsRef.current.send(b);
-                                }, 'image/jpeg', 0.4);
+                        // 2. WebRTC PeerConnection 생성
+                        pc = new RTCPeerConnection({
+                            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] // Google STUN 서버
+                        });
+
+                        // 3. 비디오 트랙을 WebRTC 커넥션에 추가
+                        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+                        pc.oniceconnectionstatechange = () => {
+                            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                                setConnected(true);
+                            } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+                                setConnected(false);
                             }
-                            setTimeout(send, 200);
                         };
-                        send();
-                    } catch (e) { alert("카메라 권한을 확인하세요."); }
+
+                        // 4. Offer(요청) 생성 및 로컬 설정
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+
+                        // 5. ICE 후보 수집 완료 대기 (터널 환경에서 안정적인 연결을 위함)
+                        await new Promise(resolve => {
+                            if (pc.iceGatheringState === 'complete') resolve();
+                            else {
+                                const checkState = () => {
+                                    if (pc.iceGatheringState === 'complete') {
+                                        pc.removeEventListener('icegatheringstatechange', checkState);
+                                        resolve();
+                                    }
+                                };
+                                pc.addEventListener('icegatheringstatechange', checkState);
+                                setTimeout(resolve, 2000); // 2초 후 강제 진행
+                            }
+                        });
+
+                        // 6. 서버로 Offer 전송 및 Answer(응답) 수신
+                        const response = await fetch('/offer', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                sdp: pc.localDescription.sdp,
+                                type: pc.localDescription.type
+                            })
+                        });
+
+                        const answer = await response.json();
+                        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+                    } catch (e) { 
+                        alert("카메라 또는 WebRTC 오류: " + e.message); 
+                    }
                 };
+                
                 init();
+
+                return () => {
+                    if (pc) pc.close();
+                    if (localStream) localStream.getTracks().forEach(t => t.stop());
+                };
             }, []);
 
             return (
                 <div className="h-screen bg-black flex items-center justify-center relative">
-                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                    <canvas ref={canvasRef} style={{ display: 'none' }} width="640" height="480" />
+                    <div className="stats-badge shadow-lg">
+                        📡 WebRTC Video Stream<br/>
+                        해상도: {stats.w}x{stats.h}<br/>
+                        (서버단에서 FPS 실시간 측정 중)
+                    </div>
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-auto object-cover" />
                     <div className={`absolute bottom-12 px-8 py-4 rounded-full font-black text-white shadow-2xl ${connected ? 'bg-blue-600 animate-pulse' : 'bg-red-600'}`}>
-                        {connected ? "LIVE COACHING ACTIVE" : "CONNECTING..."}
+                        {connected ? "WEBRTC CONNECTED" : "CONNECTING..."}
                     </div>
                 </div>
             );
         }
 
+        // ================= PC 뷰 (Receiver - 기존과 동일) =================
         function PCView() {
             const [view, setView] = useState('landing');
-            const [status, setStatus] = useState({ ai_feedback: '연결 중...', steps: [], current_step_idx: 0, has_frame: false, processing_tasks: 0, analysis_time: 0 });
+            const [status, setStatus] = useState({ 
+                ai_feedback: '연결 중...', steps: [], current_step_idx: 0, has_frame: false, processing_tasks: 0, analysis_time: 0,
+                mobile_stats: {w: 0, h: 0, fps: 0.0}, pc_fps: 0.0, mobile_qr: null
+            });
             const [uploading, setUploading] = useState(false);
             const inputRef = useRef(null);
 
@@ -85,12 +145,7 @@
                     try {
                         const res = await fetch('/status');
                         const data = await res.json();
-                        // 데이터 안전하게 업데이트
-                        setStatus(prev => ({
-                            ...prev,
-                            ...data,
-                            steps: data.steps || []
-                        }));
+                        setStatus(prev => ({ ...prev, ...data, steps: data.steps || [] }));
                         if (data.is_analyzed && view === 'upload') setView('coach');
                     } catch (e) {}
                 }, 1000);
@@ -103,27 +158,26 @@
                 setUploading(true);
                 const fd = new FormData();
                 for (let f of files) fd.append('files', f);
-                try {
-                    await fetch('/process-manual', { method: 'POST', body: fd });
-                } catch(e) {
-                    alert("업로드 실패");
-                    setUploading(false);
-                }
+                try { await fetch('/process-manual', { method: 'POST', body: fd }); } 
+                catch(e) { alert("업로드 실패"); setUploading(false); }
             };
 
-            // 에러 방지: steps가 없을 경우 대비
             const currentStep = (status.steps && status.steps.length > 0) ? status.steps[status.current_step_idx] : null;
 
             return (
-                <div className="min-h-screen text-white p-8 flex flex-col items-center justify-center">
+                <div className="min-h-screen text-white p-8 flex flex-col items-center justify-center relative">
+                    {view === 'coach' && (
+                        <div className="absolute top-8 left-8 bg-slate-900/80 text-emerald-400 p-4 rounded-xl border border-emerald-500/50 font-mono text-sm shadow-xl z-50">
+                            <p className="text-white font-bold mb-2">📊 WebRTC Network Status</p>
+                            <p>Mobile Send: <span className="text-blue-400">{status.mobile_stats.w}x{status.mobile_stats.h} @ {status.mobile_stats.fps} FPS</span></p>
+                            <p>PC Display : <span className="text-pink-400">{status.mobile_stats.w}x{status.mobile_stats.h} @ {status.pc_fps} FPS</span></p>
+                        </div>
+                    )}
+
                     {view === 'landing' && (
                         <div className="text-center">
-                            <h1 className="text-8xl font-black mb-8 italic tracking-tighter bg-gradient-to-br from-blue-400 to-white bg-clip-text text-transparent">
-                                CROP AI COACH
-                            </h1>
-                            <button onClick={() => setView('upload')} className="bg-blue-600 text-white px-16 py-6 rounded-2xl font-black text-2xl hover:scale-105 transition-all shadow-2xl">
-                                시작하기
-                            </button>
+                            <h1 className="text-8xl font-black mb-8 italic tracking-tighter bg-gradient-to-br from-blue-400 to-white bg-clip-text text-transparent">CROP AI COACH</h1>
+                            <button onClick={() => setView('upload')} className="bg-blue-600 text-white px-16 py-6 rounded-2xl font-black text-2xl hover:scale-105 transition-all">시작하기</button>
                         </div>
                     )}
 
@@ -138,11 +192,10 @@
                     )}
 
                     {view === 'coach' && (
-                        <div className="w-full max-w-[1750px] flex gap-8 h-[88vh]">
+                        <div className="w-full max-w-[1750px] flex gap-8 h-[88vh] mt-12">
                             <div className="w-1/4 glass rounded-[3rem] p-8 flex flex-col border border-white/5 shadow-2xl">
                                 <div className="flex justify-between items-center mb-8 px-2">
                                     <h2 className="text-3xl font-black italic text-blue-400">GUIDE</h2>
-                                    <span className="text-sm font-mono text-emerald-400">{status.analysis_time}s</span>
                                 </div>
                                 <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
                                     {status.steps?.map((s, i) => (
@@ -154,30 +207,46 @@
                                 </div>
                             </div>
 
-                            <div className="flex-1 flex flex-col gap-6">
-                                <div className="glass rounded-[3rem] p-8 relative overflow-hidden border-l-[12px] border-emerald-500 shadow-2xl">
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <div className="flex gap-1">
-                                            {[...Array(MAX_CONCURRENT_TASKS)].map((_, i) => (
-                                                <div key={i} className={`w-2 h-2 rounded-full ${i < (status.processing_tasks || 0) ? 'bg-blue-500 animate-pulse' : 'bg-slate-800'}`}></div>
-                                            ))}
-                                        </div>
-                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AI Vision Active</span>
-                                    </div>
-                                    <p className="text-4xl font-black leading-tight break-keep">{status.ai_feedback}</p>
-                                </div>
+                            {/* ----------------- 여기서부터 ----------------- */}
+<div className="flex-1 flex flex-col gap-6">
+    {/* 상단 피드백 영역 */}
+    <div className="glass rounded-[3rem] p-8 relative overflow-hidden border-l-[12px] border-emerald-500 shadow-2xl">
+        <div className="flex items-center gap-3 mb-2">
+            <div className="flex gap-1">
+                {[...Array(MAX_CONCURRENT_TASKS)].map((_, i) => (
+                    <div key={i} className={`w-2 h-2 rounded-full ${i < (status.processing_tasks || 0) ? 'bg-blue-500 animate-pulse' : 'bg-slate-800'}`}></div>
+                ))}
+            </div>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AI Vision Active</span>
+        </div>
+        <p className="text-4xl font-black leading-tight break-keep">{status.ai_feedback}</p>
+    </div>
 
-                                <div className="flex-1 glass rounded-[4rem] overflow-hidden relative shadow-2xl bg-black border-4 border-slate-800">
-                                    {status.has_frame ? (
-                                        <img src="/stream" className="w-full h-full object-contain" alt="Live Feed" />
-                                    ) : (
-                                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 bg-slate-950/40">
-                                            <p className="text-2xl font-black mb-4">AWAITING CAMERA</p>
-                                            <p className="font-mono text-sm opacity-50">{window.location.host}/mobile</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+    {/* 하단 카메라/QR 영역 */}
+    <div className="flex-1 glass rounded-[4rem] overflow-hidden relative shadow-2xl bg-black border-4 border-slate-800 flex items-center justify-center">
+        {status.has_frame ? (
+            /* 1. 카메라가 연결되었을 때 */
+            <img src="/stream" className="w-full h-full object-contain" alt="Live Feed" />
+        ) : status.mobile_qr ? (
+            /* 2. QR 코드가 생성되었을 때 */
+            <div className="flex flex-col items-center">
+                <div className="bg-white p-4 rounded-[2rem] shadow-[0_0_50px_rgba(59,130,246,0.3)] mb-6">
+                    <img src={status.mobile_qr} className="w-64 h-64" alt="Mobile Connection QR" />
+                </div>
+                <p className="text-white text-2xl font-black mb-2">스마트폰 연결</p>
+                <p className="text-slate-400 text-lg text-center">QR 코드를 스캔하여<br/>카메라를 연결하세요</p>
+            </div>
+        ) : (
+            /* 3. 대기 중일 때 */
+            <div className="text-slate-700 bg-slate-950/40 w-full h-full flex flex-col items-center justify-center">
+                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-6"></div>
+                <p className="text-2xl font-black mb-4 italic">PREPARING SYSTEM</p>
+                <p className="font-mono text-sm opacity-50">매뉴얼 분석 완료 후 QR 코드가 나타납니다</p>
+            </div>
+        )}
+    </div>
+</div>
+{/* ----------------- 여기까지 ----------------- */}
 
                             <div className="w-1/4 flex flex-col gap-6">
                                 <div className="flex-1 glass rounded-[3rem] p-8 flex flex-col border border-white/5 shadow-2xl overflow-hidden">
@@ -188,7 +257,6 @@
                                                 <img src={currentStep.image_url} className="w-full h-full object-contain" alt="Step Manual" />
                                             </div>
                                             <div className="p-6 bg-slate-800/50 rounded-2xl border border-white/10">
-                                                <p className="text-blue-400 font-bold mb-2">Detailed Instruction</p>
                                                 <p className="text-slate-300 leading-relaxed text-sm">{currentStep.desc}</p>
                                             </div>
                                         </div>
