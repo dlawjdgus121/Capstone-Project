@@ -73,7 +73,7 @@ except ImportError:
     PDF_SUPPORT = False
 
 # API 설정
-const_apiKey = "AIzaSyAGGEhoMahb-qY7X-JYF9XfnOQHw83ghLs"
+const_apiKey = ""
 MODEL_NAME = "gemini-3-flash-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={const_apiKey}"
 
