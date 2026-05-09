@@ -8,6 +8,9 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/webrtc-adapter/8.1.2/adapter.min.js"></script>
+    <script src="https://embed.cloudflarestream.com/embed/webrtc.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
     <style>
         body { background-color: #020617; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; color: white; }
@@ -95,7 +98,7 @@
     const { useState, useEffect, useRef, useCallback } = React;
 
     const LIVEKIT_URL = "wss://capstone-project-jvy5e1z6.livekit.cloud";
-    const MOBILE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzc0OTMyOTYsImlkZW50aXR5IjoibWIiLCJpc3MiOiJBUElhWkpDOVE4cjJTeU4iLCJuYmYiOjE3Nzc0NTcyOTYsInN1YiI6Im1iIiwidmlkZW8iOnsiY2FuUHVibGlzaCI6dHJ1ZSwiY2FuUHVibGlzaERhdGEiOnRydWUsImNhblN1YnNjcmliZSI6dHJ1ZSwicm9vbSI6ImNkIiwicm9vbUpvaW4iOnRydWV9fQ.CAQj2czWzd3pAH_2ssAvSvoZHJC8fIIoXGruJNyoMDY";
+    const MOBILE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzc3ODY0MTQsImlkZW50aXR5IjoibWIiLCJpc3MiOiJBUElhWkpDOVE4cjJTeU4iLCJuYmYiOjE3Nzc3MDAwMTQsInN1YiI6Im1iIiwidmlkZW8iOnsiY2FuUHVibGlzaCI6dHJ1ZSwiY2FuUHVibGlzaERhdGEiOnRydWUsImNhblN1YnNjcmliZSI6dHJ1ZSwicm9vbSI6ImNkIiwicm9vbUpvaW4iOnRydWV9fQ.jsyCH6iMC6lSu02fKJ6qfx7bxDCWY_R2zZMGkzEg4Cc";
 
     /* ── [복구] 모바일 전용 송출 뷰 ── */
     /* ── [수정] 모바일 전용 송출 뷰 (좌우 반전 토글 적용) ── */
@@ -210,6 +213,7 @@
     }
 
     /* ── PC 메인 코칭 뷰 ── */
+    /* ── PC 메인 코칭 뷰 ── */
     function PCView() {
         const [view, setView] = useState('landing');
         const [status, setStatus] = useState({ ai_response:'대기 중...', manual_steps:[], current_step_idx:0, has_frame:false, analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload', current_fps:0, last_rtt:0 });
@@ -222,6 +226,34 @@
         const inputRef = useRef(null);
         const listRef = useRef(null);
         const stepRefs = useRef([]);
+        
+        // ✨ [추가 1] QR 코드 URL 상태 관리
+        const [qrCodeUrl, setQrCodeUrl] = useState('');
+
+        // ✨ [추가 2] 주소를 읽어와서 QR 코드를 생성하는 로직
+        useEffect(() => {
+            const generateQR = () => {
+                // 수동으로 주소를 넣고 싶을 때 사용하는 변수 (PC 브라우저 주소창으로 직접 접속하면 사실상 안 쓰임)
+                const CLOUDFLARE_DOMAIN = "https://여러분의-클라우드플레어-주소.trycloudflare.com"; 
+
+                // 현재 주소가 https면 그 주소 그대로 사용, 아니면 위 도메인 사용
+                let baseUrl = window.location.protocol === 'https:' ? 
+                    `${window.location.protocol}//${window.location.host}` : 
+                    CLOUDFLARE_DOMAIN;
+                
+                const mobileUrl = `${baseUrl}/mobile`;
+                
+                try {
+                    const qr = qrcode(0, 'L');
+                    qr.addData(mobileUrl);
+                    qr.make();
+                    setQrCodeUrl(qr.createDataURL(4, 1));
+                } catch (e) {
+                    console.error("QR 코드 생성 실패:", e);
+                }
+            };
+            generateQR();
+        }, []);
 
         useEffect(() => {
             const timer = setInterval(async () => {
@@ -236,6 +268,8 @@
             }, 1000);
             return () => clearInterval(timer);
         }, [view, uploading]);
+
+        
 
         const uploadFiles = async (files) => {
             if (!files || !files.length) return;
@@ -336,18 +370,27 @@
                 </div>
 
                 {/* [중앙] 메인 영상 피드 (크기 확대 및 카메라 연결) */}
-                {/* [중앙] 메인 영상 피드 (크기 확대 및 카메라 연결) */}
 <div className="flex-1 flex flex-col justify-center items-center">
     <div className="video-fixed-ratio">
         {status.has_frame ? (
-            /* ✨ 여기에 -scale-x-100 을 다시 확실하게 넣어줍니다! */
+            /* 영상 수신 중: 거울모드 유지 */
             <img src="/stream" className="-scale-x-100 w-full h-full object-cover" alt="Live Feed" />
+        ) : qrCodeUrl ? (
+            /* ✨ [추가 3] 영상이 안 들어올 때 QR 코드 표시! */
+            <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center">
+                <div className="bg-white p-4 rounded-[2rem] shadow-[0_0_50px_rgba(59,130,246,0.3)] mb-6">
+                    <img src={qrCodeUrl} className="w-64 h-64" alt="Mobile Connection QR" />
+                </div>
+                <p className="text-white text-2xl font-black mb-2">스마트폰 카메라 연결</p>
+                <p className="text-slate-400 text-lg text-center">이 QR 코드를 스마트폰으로 스캔하여<br/>카메라를 연결해 주세요.</p>
+            </div>
         ) : (
+            /* 영상도 없고 QR도 아직 생성 전일 때 대기 로딩 */
             <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 bg-slate-950">
                 <div className="w-16 h-16 border-4 border-slate-800 border-t-blue-600 rounded-full animate-spin mb-4"></div>
                 <p className="font-black italic text-2xl uppercase tracking-tighter text-center px-10">Awaiting Hardware Feed...</p>
             </div>
-                        )}
+        )}
 
                         {/* 영상 위 지표(OSD) */}
                         <div className="absolute top-8 left-8 flex gap-4 z-20">

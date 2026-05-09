@@ -36,7 +36,7 @@ except ImportError:
 # 🌟 환경 변수 및 설정
 # ==========================================
 API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
 raw_runpod_url = os.getenv("RUNPOD_INFERENCE_URL", "").strip()
@@ -55,7 +55,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─── [하드웨어 제어: ESP32 설정 및 상태 추가] ─────────────────────────────
-ESP32_IP = "192.168.137.182" 
+ESP32_IP = "192.168.137.94"
 UDP_PORT = 12345           
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -149,16 +149,16 @@ def load_session() -> bool:
 # ─── [하드웨어 제어 보조 함수 추가] ─────────────────────────────────────
 def calculate_servo_angles(hx, hy):
     dist_x, dist_y = hx - 0.5, hy - 0.5
-    if abs(dist_x) < 0.15 and abs(dist_y) < 0.15:
+    if abs(dist_x) < 0.40 and abs(dist_y) < 0.40:
         hw_state["current_pan"], hw_state["current_tilt"] = hw_state["smooth_pan"], hw_state["smooth_tilt"]
     else:
-        hw_state["current_pan"] += (dist_x * 4.0)
-        hw_state["current_tilt"] += (dist_y * 4.0)
+        hw_state["current_pan"] -= (dist_x * 2.0)
+        hw_state["current_tilt"] += (dist_y * 2.0)
     
     hw_state["current_pan"] = max(hw_state["PAN_MIN_LIMIT"], min(hw_state["PAN_MAX_LIMIT"], hw_state["current_pan"]))
     hw_state["current_tilt"] = max(hw_state["TILT_MIN_LIMIT"], min(hw_state["TILT_MAX_LIMIT"], hw_state["current_tilt"]))
-    hw_state["smooth_pan"] = (hw_state["smooth_pan"] * 0.8) + (hw_state["current_pan"] * 0.2)
-    hw_state["smooth_tilt"] = (hw_state["smooth_tilt"] * 0.8) + (hw_state["current_tilt"] * 0.2)
+    hw_state["smooth_pan"] = (hw_state["smooth_pan"] * 0.9) + (hw_state["current_pan"] * 0.1)
+    hw_state["smooth_tilt"] = (hw_state["smooth_tilt"] * 0.9) + (hw_state["current_tilt"] * 0.1)
 
 def get_finger_status(hand_lms):
     fingers = []
@@ -625,16 +625,17 @@ async def trigger_vlm_analysis():
     idx = state["current_step_idx"]
     current_step = state["manual_steps"][idx]
 
-    # 👇 VLM 분석 시작 시간 기록 및 로그 출력
     print(f"🚀 [VLM] STEP {idx + 1} 오픈 도메인 코칭 분석 요청 시작...")
-    vlm_start_time = time.time() 
+    
+    # 👇 순수 GPU 추론 시간(네트워크 포함) 측정 시작
+    inference_start_time = time.time() 
 
     # 3. GPU 인퍼런스 서버로 전송
     prediction = await call_runpod_inference(current_step["image_url"], state["latest_frame"])
 
-    # 👇 VLM 분석 종료 시간 기록 및 계산
-    vlm_end_time = time.time()
-    vlm_duration = round(vlm_end_time - vlm_start_time, 2)
+    # 👇 순수 GPU 추론 시간 측정 종료
+    inference_end_time = time.time()
+    inference_duration = round(inference_end_time - inference_start_time, 2)
 
     # 4. 결과 처리 및 상태 업데이트
     if prediction and prediction.get("result") != "ERROR":
@@ -643,8 +644,8 @@ async def trigger_vlm_analysis():
         
         state["ai_response"] = f"[{result_status}] {reason}"
 
-        # 👇 분석 완료 소요 시간 로그 출력
-        print(f"⏱️ [VLM] 분석 완료! 소요 시간: {vlm_duration}초 | 결과: {result_status}")
+        # 👇 순수 추론 시간 로그 출력
+        print(f"⏱️ [VLM] 추론 완료! 순수 소요 시간: {inference_duration}초 | 결과: {result_status}")
 
         if result_status == "PASS" and not state["step_locked"]:
             if idx + 1 < len(state["manual_steps"]):
@@ -655,13 +656,12 @@ async def trigger_vlm_analysis():
             "status": "success", 
             "prediction": prediction,
             "current_step": state["current_step_idx"],
-            "vlm_duration": vlm_duration # (선택) 프론트엔드에도 시간 정보를 보내줌
+            "vlm_duration": inference_duration # 프론트엔드에 순수 추론 시간 전달
         }
     else:
         err_reason = prediction.get("reason", "알 수 없는 오류") if prediction else "응답 없음"
-        print(f"🚨 [VLM] 에러 발생! 소요 시간: {vlm_duration}초 | 사유: {err_reason}")
+        print(f"🚨 [VLM] 에러 발생! 소요 시간: {inference_duration}초 | 사유: {err_reason}")
         return {"status": "error", "message": f"VLM 통신 실패: {err_reason}"}
-
 # ==========================================
 # 🌟 WebRTC (LiveKit) 영상 처리 파트 (하드웨어 제어 포함)
 # ==========================================
