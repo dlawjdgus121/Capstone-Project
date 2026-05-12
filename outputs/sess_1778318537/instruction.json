@@ -1,0 +1,38 @@
+[
+    {
+        "step": 1,
+        "title": "Step 1",
+        "desc": "정사각형 종이를 가로와 세로 방향으로 접었다 펴서 중심선을 만듭니다.",
+        "image_url": "/outputs/sess_1778318537/img_step_1_1778318548703.jpg"
+    },
+    {
+        "step": 2,
+        "title": "Step 2",
+        "desc": "좌우 양쪽 모서리를 수직 중심선에 맞춰 접습니다.",
+        "image_url": "/outputs/sess_1778318537/img_step_2_1778318548714.jpg"
+    },
+    {
+        "step": 3,
+        "title": "Step 3",
+        "desc": "위아래 모서리를 수평 중심선에 맞춰 접습니다.",
+        "image_url": "/outputs/sess_1778318537/img_step_3_1778318548716.jpg"
+    },
+    {
+        "step": 4,
+        "title": "Step 4",
+        "desc": "아래쪽의 뾰족한 부분을 점선을 따라 위로 접어 올립니다.",
+        "image_url": "/outputs/sess_1778318537/img_step_4_1778318548717.jpg"
+    },
+    {
+        "step": 5,
+        "title": "Step 5",
+        "desc": "상단 양쪽 모서리를 안쪽으로 접고, 중앙의 뾰족한 부분도 아래로 접어 내립니다.",
+        "image_url": "/outputs/sess_1778318537/img_step_5_1778318548718.jpg"
+    },
+    {
+        "step": 6,
+        "title": "Step 6",
+        "desc": "돼지 얼굴 모양이 완성되면 눈과 콧구멍을 그려 넣어 마무리합니다.",
+        "image_url": "/outputs/sess_1778318537/img_step_6_1778318548718.jpg"
+    }
+]

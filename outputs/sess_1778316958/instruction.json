@@ -1,0 +1,86 @@
+[
+    {
+        "step": 1,
+        "title": "Step 1",
+        "desc": "정사각형 종이를 점선을 따라 대각선으로 접습니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_1_1778316975505.jpg"
+    },
+    {
+        "step": 2,
+        "title": "Step 2",
+        "desc": "삼각형을 점선을 따라 반으로 접습니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_2_1778316975517.jpg"
+    },
+    {
+        "step": 3,
+        "title": "Step 3",
+        "desc": "삼각형의 윗부분을 접었다가 폅니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_3_1778316975519.jpg"
+    },
+    {
+        "step": 4,
+        "title": "Step 4",
+        "desc": "종이를 벌려 눌러 접어 사각형 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_4_1778316975520.jpg"
+    },
+    {
+        "step": 5,
+        "title": "Step 5",
+        "desc": "종이를 뒤집어서 반대쪽도 똑같이 접습니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_5_1778316975521.jpg"
+    },
+    {
+        "step": 6,
+        "title": "Step 6",
+        "desc": "가운데 중심선에 맞춰 양쪽 날개를 접습니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_6_1778316975522.jpg"
+    },
+    {
+        "step": 7,
+        "title": "Step 7",
+        "desc": "Fold the other side and do the same as shown in step 6.",
+        "image_url": "/outputs/sess_1778316958/img_step_7_1778316975523.jpg"
+    },
+    {
+        "step": 8,
+        "title": "Step 8",
+        "desc": "학의 날개 부분을 아래로 내립니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_8_1778316975524.jpg"
+    },
+    {
+        "step": 9,
+        "title": "Step 9",
+        "desc": "Fold the other side the same as shown in 8",
+        "image_url": "/outputs/sess_1778316958/img_step_9_1778316975525.jpg"
+    },
+    {
+        "step": 10,
+        "title": "Step 10",
+        "desc": "아랫부분을 벌려서 위쪽으로 길게 접어 올립니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_10_1778316975527.jpg"
+    },
+    {
+        "step": 11,
+        "title": "Step 11",
+        "desc": "양 끝을 안으로 꺾어 접어 머리와 꼬리를 만듭니다.",
+        "image_url": "/outputs/sess_1778316958/img_step_11_1778316975528.jpg"
+    },
+    {
+        "step": 12,
+        "title": "Step 12",
+        "desc": "Make face by folding toward inside.",
+        "image_url": "/outputs/sess_1778316958/img_step_12_1778316975530.jpg"
+    },
+    {
+        "step": 13,
+        "title": "Step 13",
+        "desc": "Stretch the wings, and blow up the body through a hole underneath.",
+        "image_url": "/outputs/sess_1778316958/img_step_13_1778316975532.jpg"
+    },
+    {
+        "step": 14,
+        "title": "Finished",
+        "desc": "Finished",
+        "image_url": "/outputs/sess_1778316958/img_step_14_1778316975533.jpg"
+    }
+]

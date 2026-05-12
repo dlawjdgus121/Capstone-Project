@@ -1,0 +1,43 @@
+{
+  "current_step_idx": 0,
+  "manual_steps": [
+    {
+      "step": 1,
+      "title": "",
+      "desc": "정사각형 종이를 가로와 세로 방향으로 반으로 접었다가 폅니다.",
+      "image_url": "/outputs/sess_1778472498/img_step_1_1778472509488.jpg"
+    },
+    {
+      "step": 2,
+      "title": "",
+      "desc": "양쪽 모서리를 중심선에 맞춰 접습니다.",
+      "image_url": "/outputs/sess_1778472498/img_step_2_1778472509495.jpg"
+    },
+    {
+      "step": 3,
+      "title": "",
+      "desc": "위아래 모서리를 중심선에 맞춰 접습니다.",
+      "image_url": "/outputs/sess_1778472498/img_step_3_1778472509496.jpg"
+    },
+    {
+      "step": 4,
+      "title": "",
+      "desc": "아래쪽 부분을 위로 접어 올립니다.",
+      "image_url": "/outputs/sess_1778472498/img_step_4_1778472509497.jpg"
+    },
+    {
+      "step": 5,
+      "title": "",
+      "desc": "양쪽 위 모서리를 아래로 비스듬히 접고, 아래쪽 뾰족한 부분을 안으로 접어 넣습니다.",
+      "image_url": "/outputs/sess_1778472498/img_step_5_1778472509498.jpg"
+    },
+    {
+      "step": 6,
+      "title": "",
+      "desc": "완성된 돼지 얼굴에 눈과 코를 그려 넣습니다.",
+      "image_url": "/outputs/sess_1778472498/img_step_6_1778472509499.jpg"
+    }
+  ],
+  "analysis_time": 11.41,
+  "step_locked": false
+}

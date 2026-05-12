@@ -1,0 +1,86 @@
+[
+    {
+        "step": 1,
+        "title": "종이 준비",
+        "desc": "정사각형 종이를 대각선으로 접습니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_1_1778318318600.jpg"
+    },
+    {
+        "step": 2,
+        "title": "삼각형 접기",
+        "desc": "삼각형을 반으로 접습니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_2_1778318318614.jpg"
+    },
+    {
+        "step": 3,
+        "title": "중심선 만들기",
+        "desc": "삼각형을 세로로 반 접어 표시선을 만듭니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_3_1778318318616.jpg"
+    },
+    {
+        "step": 4,
+        "title": "주머니 접기",
+        "desc": "한쪽 끝을 벌려 사각형 모양으로 눌러 접습니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_4_1778318318625.jpg"
+    },
+    {
+        "step": 5,
+        "title": "반대편 접기",
+        "desc": "뒤집어서 반대쪽도 같은 방법으로 접습니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_5_1778318318627.jpg"
+    },
+    {
+        "step": 6,
+        "title": "가이드선 만들기",
+        "desc": "중심선에 맞춰 양옆을 접어 표시선을 만듭니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_6_1778318318630.jpg"
+    },
+    {
+        "step": 7,
+        "title": "펼쳐 접기",
+        "desc": "Fold the other side and do the same as shown in step 6.",
+        "image_url": "/outputs/sess_1778318297/img_step_7_1778318318631.jpg"
+    },
+    {
+        "step": 8,
+        "title": "중심 맞추기",
+        "desc": "중심선에 맞춰 양쪽 날개를 안으로 접습니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_8_1778318318632.jpg"
+    },
+    {
+        "step": 9,
+        "title": "반대쪽 접기",
+        "desc": "Fold the other side the same as shown in 8.",
+        "image_url": "/outputs/sess_1778318297/img_step_9_1778318318633.jpg"
+    },
+    {
+        "step": 10,
+        "title": "가늘게 접기",
+        "desc": "양쪽 끝부분을 가늘게 안쪽으로 접습니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_10_1778318318634.jpg"
+    },
+    {
+        "step": 11,
+        "title": "목과 꼬리 만들기",
+        "desc": "아래쪽 끝을 위로 꺾어 올려 머리와 꼬리를 만듭니다.",
+        "image_url": "/outputs/sess_1778318297/img_step_11_1778318318635.jpg"
+    },
+    {
+        "step": 12,
+        "title": "머리 접기",
+        "desc": "Make face by folding toward inside.",
+        "image_url": "/outputs/sess_1778318297/img_step_12_1778318318639.jpg"
+    },
+    {
+        "step": 13,
+        "title": "날개 펴기",
+        "desc": "Stretch the wings, and blow up the body through a hole underneath.",
+        "image_url": "/outputs/sess_1778318297/img_step_13_1778318318640.jpg"
+    },
+    {
+        "step": 14,
+        "title": "완성",
+        "desc": "Finished",
+        "image_url": "/outputs/sess_1778318297/img_step_14_1778318318642.jpg"
+    }
+]

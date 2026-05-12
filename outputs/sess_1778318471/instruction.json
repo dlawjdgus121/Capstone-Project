@@ -1,0 +1,104 @@
+[
+    {
+        "step": 1,
+        "title": "대각선으로 접기",
+        "desc": "정사각형 종이를 대각선 방향으로 반으로 접습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_1_1778318488703.jpg"
+    },
+    {
+        "step": 2,
+        "title": "반으로 접기",
+        "desc": "삼각형을 왼쪽으로 반으로 접습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_2_1778318488733.jpg"
+    },
+    {
+        "step": 3,
+        "title": "주머니 접기",
+        "desc": "화살표 방향을 따라 주머니 모양으로 벌려 접습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_3_1778318488733.jpg"
+    },
+    {
+        "step": 4,
+        "title": "뒷면 접기",
+        "desc": "반대쪽도 같은 방식으로 접어 내립니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_4_1778318488734.jpg"
+    },
+    {
+        "step": 5,
+        "title": "뒤집기",
+        "desc": "종이를 뒤집습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_5_1778318488742.jpg"
+    },
+    {
+        "step": 6,
+        "title": "반대편 주머니 접기",
+        "desc": "반대편도 주머니 모양으로 벌려 접습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_6_1778318488744.jpg"
+    },
+    {
+        "step": 7,
+        "title": "가이드선 만들기",
+        "desc": "양쪽 모서리를 중앙선에 맞춰 접었다가 폅니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_7_1778318488744.jpg"
+    },
+    {
+        "step": 8,
+        "title": "안으로 접기",
+        "desc": "화살표 방향을 따라 안으로 접어 넣습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_8_1778318488745.jpg"
+    },
+    {
+        "step": 9,
+        "title": "학 접기 기본형",
+        "desc": "양옆과 위쪽을 화살표 방향으로 접어 올립니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_9_1778318488746.jpg"
+    },
+    {
+        "step": 10,
+        "title": "중앙으로 접기",
+        "desc": "양옆의 모서리를 중앙선에 맞춰 접습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_10_1778318488747.jpg"
+    },
+    {
+        "step": 11,
+        "title": "중앙으로 접기 계속",
+        "desc": "반대쪽 모서리도 중앙선에 맞춰 접습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_11_1778318488748.jpg"
+    },
+    {
+        "step": 12,
+        "title": "뒤로 접기",
+        "desc": "화살표 방향으로 뒤로 넘겨 접습니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_12_1778318488749.jpg"
+    },
+    {
+        "step": 13,
+        "title": "다리 벌리기",
+        "desc": "양쪽 다리를 화살표 방향으로 벌려 줍니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_13_1778318488750.jpg"
+    },
+    {
+        "step": 14,
+        "title": "다리 모양 잡기",
+        "desc": "양쪽 다리를 꺾어서 발 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_14_1778318488750.jpg"
+    },
+    {
+        "step": 15,
+        "title": "발 끝 접기",
+        "desc": "다리 끝부분을 한 번 더 꺾어 발을 완성합니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_15_1778318488751.jpg"
+    },
+    {
+        "step": 16,
+        "title": "몸통 접기",
+        "desc": "몸통 아랫부분을 계단 접기하여 점프할 수 있게 만듭니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_16_1778318488752.jpg"
+    },
+    {
+        "step": 17,
+        "title": "개구리 완성",
+        "desc": "눈을 붙여 개구리를 완성합니다.",
+        "image_url": "/outputs/sess_1778318471/img_step_17_1778318488752.jpg"
+    }
+]

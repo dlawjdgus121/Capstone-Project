@@ -1,0 +1,104 @@
+[
+    {
+        "step": 1,
+        "title": "Step 1",
+        "desc": "정사각형 종이를 대각선 방향으로 반으로 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_1_1778313979753.jpg"
+    },
+    {
+        "step": 2,
+        "title": "Step 2",
+        "desc": "삼각형을 다시 반으로 접어 표시선을 만듭니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_2_1778313979797.jpg"
+    },
+    {
+        "step": 3,
+        "title": "Step 3",
+        "desc": "한쪽 면을 벌려 사각형 모양이 되도록 눌러 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_3_1778313979805.jpg"
+    },
+    {
+        "step": 4,
+        "title": "Step 4",
+        "desc": "반대쪽도 같은 방식으로 눌러 접어 사각형을 만듭니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_4_1778313979806.jpg"
+    },
+    {
+        "step": 5,
+        "title": "Step 5",
+        "desc": "한쪽 날개를 펼쳐서 눌러 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_5_1778313979808.jpg"
+    },
+    {
+        "step": 6,
+        "title": "Step 6",
+        "desc": "모든 면을 돌아가며 같은 방식으로 눌러 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_6_1778313979809.jpg"
+    },
+    {
+        "step": 7,
+        "title": "Step 7",
+        "desc": "양쪽 모서리를 중심선에 맞춰 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_7_1778313979811.jpg"
+    },
+    {
+        "step": 8,
+        "title": "Step 8",
+        "desc": "모든 면을 동일하게 안쪽으로 접어 올립니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_8_1778313979812.jpg"
+    },
+    {
+        "step": 9,
+        "title": "Step 9",
+        "desc": "아래쪽 끝을 잡고 위로 들어 올려 학접기 기본형을 만듭니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_9_1778313979814.jpg"
+    },
+    {
+        "step": 10,
+        "title": "Step 10",
+        "desc": "모든 면을 학접기 기본형으로 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_10_1778313979815.jpg"
+    },
+    {
+        "step": 11,
+        "title": "Step 11",
+        "desc": "양옆의 모서리를 중심선 쪽으로 모아 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_11_1778313979817.jpg"
+    },
+    {
+        "step": 12,
+        "title": "Step 12",
+        "desc": "다리가 될 부분을 양옆으로 벌려 접습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_12_1778313979818.jpg"
+    },
+    {
+        "step": 13,
+        "title": "Step 13",
+        "desc": "위쪽의 뾰족한 부분을 안쪽으로 접어 넣습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_13_1778313979819.jpg"
+    },
+    {
+        "step": 14,
+        "title": "Step 14",
+        "desc": "앞다리와 뒷다리를 밖으로 꺾어 내립니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_14_1778313979820.jpg"
+    },
+    {
+        "step": 15,
+        "title": "Step 15",
+        "desc": "다리 부분을 지그재그로 접어 관절 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_15_1778313979821.jpg"
+    },
+    {
+        "step": 16,
+        "title": "Step 16",
+        "desc": "개구리의 몸통을 입체적으로 다듬습니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_16_1778313979822.jpg"
+    },
+    {
+        "step": 17,
+        "title": "Step 17",
+        "desc": "눈을 그리고 모양을 잡아 개구리를 완성합니다.",
+        "image_url": "/outputs/sess_1778313967/img_step_17_1778313979823.jpg"
+    }
+]

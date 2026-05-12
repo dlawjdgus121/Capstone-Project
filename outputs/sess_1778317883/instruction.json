@@ -1,0 +1,86 @@
+[
+    {
+        "step": 1,
+        "title": "",
+        "desc": "정사각형 종이를 대각선 방향으로 접었다 펴서 중심선을 만듭니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_1_1778317901586.jpg"
+    },
+    {
+        "step": 2,
+        "title": "",
+        "desc": "종이를 반대쪽 대각선으로 접어 삼각형 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_2_1778317901598.jpg"
+    },
+    {
+        "step": 3,
+        "title": "",
+        "desc": "삼각형을 다시 한번 반으로 접어 더 작은 삼각형을 만듭니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_3_1778317901598.jpg"
+    },
+    {
+        "step": 4,
+        "title": "",
+        "desc": "한쪽 면의 틈을 벌려 사각형 모양이 되도록 눌러 접습니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_4_1778317901604.jpg"
+    },
+    {
+        "step": 5,
+        "title": "",
+        "desc": "뒤집어서 반대쪽 면도 똑같이 사각형 모양으로 눌러 접습니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_5_1778317901604.jpg"
+    },
+    {
+        "step": 6,
+        "title": "",
+        "desc": "중심선에 맞춰 양옆의 가장자리를 안쪽으로 접습니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_6_1778317901606.jpg"
+    },
+    {
+        "step": 7,
+        "title": "",
+        "desc": "Fold the other side and do the same as shown in step 6.",
+        "image_url": "/outputs/sess_1778317883/img_step_7_1778317901607.jpg"
+    },
+    {
+        "step": 8,
+        "title": "",
+        "desc": "접힌 부분을 펼치면서 윗장을 들어 올려 길쭉한 마름모 모양으로 접습니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_8_1778317901607.jpg"
+    },
+    {
+        "step": 9,
+        "title": "",
+        "desc": "Fold the other side the same as shown in 8.",
+        "image_url": "/outputs/sess_1778317883/img_step_9_1778317901608.jpg"
+    },
+    {
+        "step": 10,
+        "title": "",
+        "desc": "마름모의 아래쪽 양옆을 다시 한번 중심선에 맞춰 가늘게 접습니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_10_1778317901610.jpg"
+    },
+    {
+        "step": 11,
+        "title": "",
+        "desc": "양쪽 아래 끝부분을 위로 꺾어 올려 학의 목과 꼬리를 만듭니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_11_1778317901611.jpg"
+    },
+    {
+        "step": 12,
+        "title": "",
+        "desc": "Make face by folding toward inside.",
+        "image_url": "/outputs/sess_1778317883/img_step_12_1778317901613.jpg"
+    },
+    {
+        "step": 13,
+        "title": "",
+        "desc": "Stretch the wings, and blow up the body through a hole underneath.",
+        "image_url": "/outputs/sess_1778317883/img_step_13_1778317901615.jpg"
+    },
+    {
+        "step": 14,
+        "title": "Finished",
+        "desc": "종이학이 완성되었습니다.",
+        "image_url": "/outputs/sess_1778317883/img_step_14_1778317901615.jpg"
+    }
+]
