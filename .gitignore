@@ -1,0 +1,27 @@
+# --- [1] 가상환경 및 시스템 파일 (절대 올리지 마세요) ---
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.DS_Store
+
+# --- [2] 데이터 및 미디어 파일 (용량 큰 거) ---
+*.jpg
+*.png
+*.mp4
+*.wav
+*.mp3
+data/ref_images/*
+# 단, 폴더 자체는 유지하고 싶다면 아래 줄 추가
+!data/ref_images/.gitkeep
+
+# --- [3] 보안 키 파일 (해킹 당하기 싫으면 필수) ---
+config.py
+secrets.json
+*.env
+
+# --- [4] 아두이노/PlatformIO 빌드 파일 ---
+.pio/
+.vscode/
+firmware/.pio/

@@ -1,0 +1,43 @@
+{
+  "current_step_idx": 0,
+  "manual_steps": [
+    {
+      "step": 1,
+      "title": "STEP 1",
+      "desc": "부품 01의 양쪽 끝에 바퀴 05를 아래 방향 화살표에 따라 삽입하여 고정합니다.",
+      "image_url": "/outputs/sess_1778546821/img_step_1_1778546838175.jpg"
+    },
+    {
+      "step": 2,
+      "title": "STEP 2",
+      "desc": "바퀴가 조립된 부품 01의 중앙 지지대에 기둥을 세우고, 나사 12와 와셔 08을 사용하여 기둥을 고정합니다.",
+      "image_url": "/outputs/sess_1778546821/img_step_2_1778546838179.jpg"
+    },
+    {
+      "step": 3,
+      "title": "STEP 3",
+      "desc": "부품 02(수평 바)에 기둥 03과 조절 손잡이 10을 결합하고, 나사 07과 와셔 08을 사용하여 고정합니다.",
+      "image_url": "/outputs/sess_1778546821/img_step_3_1778546838182.jpg"
+    },
+    {
+      "step": 4,
+      "title": "STEP 4",
+      "desc": "기둥에 조립된 수평 바에 클램프 06이 달린 부품을 양쪽에서 화살표 방향으로 밀어 넣어 고정합니다.",
+      "image_url": "/outputs/sess_1778546821/img_step_4_1778546838185.jpg"
+    },
+    {
+      "step": 5,
+      "title": "STEP 5",
+      "desc": "기둥 03 위에 조립된 부품 02에 부품 10으로 표시된 핸들을 사용하여 플레이트를 고정합니다.",
+      "image_url": "/outputs/sess_1778546821/img_step_5_1778546838190.jpg"
+    },
+    {
+      "step": 6,
+      "title": "STEP 6",
+      "desc": "조립된 데스크 상판의 각도를 조절하기 위해 조절 손잡이 (부품 09)를 시계 반대 방향으로 돌려 풀고 각도를 조절한 후 다시 조여 고정합니다.",
+      "image_url": "/outputs/sess_1778546821/img_step_6_1778546838194.jpg"
+    }
+  ],
+  "analysis_time": 17.14,
+  "step_locked": false
+}
