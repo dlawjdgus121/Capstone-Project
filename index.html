@@ -682,6 +682,7 @@ function PCView() {
     const [passToast, setPassToast] = useState(false);
     const [rtt, setRtt] = useState(null);
     const [qrCodeUrl, setQrCodeUrl] = useState('');
+    const [streamAlive, setStreamAlive] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
     const passTimerRef = useRef(null);
     const prevAiResult = useRef('WAIT');
@@ -695,19 +696,77 @@ function PCView() {
 
     const [isNewStart, setIsNewStart] = React.useState(false);
 
-    /* QR 코드 생성 ── 현재 URL 기반으로 /mobile 경로 QR 자동 생성 */
+    /* QR 코드 생성 — view가 바뀔 때마다 재실행해서 터널 URL 반영 */
     useEffect(() => {
-        try {
-            const base = window.location.protocol === 'https:'
-                ? `${window.location.protocol}//${window.location.host}`
-                : window.location.href.replace(/\/$/, '');
-            const mobileUrl = `${base}/mobile`;
-            const qr = qrcode(0, 'L');
-            qr.addData(mobileUrl);
-            qr.make();
-            setQrCodeUrl(qr.createDataURL(4, 1));
-        } catch(e) { console.error('QR 생성 실패:', e); }
-    }, []);
+        if (view !== 'coach') return;  // 코치 화면일 때만 갱신
+        const generateQR = (mobileUrl) => {
+            try {
+                const qr = qrcode(0, 'L');
+                qr.addData(mobileUrl);
+                qr.make();
+                setQrCodeUrl(qr.createDataURL(4, 1));
+                return mobileUrl;
+            } catch(e) { console.error('QR 생성 실패:', e); return null; }
+        };
+
+        const tryGenerate = async () => {
+            try {
+                const cfg = await fetch('/config', {cache: 'no-store'}).then(r => r.json());
+                if (cfg.mobile_url) {
+                    const url = cfg.mobile_url.replace(/[/]$/,  '') + '/mobile';
+                    generateQR(url);
+                    return true;  // 터널 URL 확정 — 갱신 중단
+                } else {
+                    const base = window.location.protocol + '//' + window.location.host;
+                    generateQR(base + '/mobile');
+                    return false;  // 아직 터널 URL 없음 — 계속 재시도
+                }
+            } catch(e) {
+                const base = window.location.protocol + '//' + window.location.host;
+                generateQR(base + '/mobile');
+                return false;
+            }
+        };
+
+        // 즉시 1회 실행
+        tryGenerate().then(done => {
+            if (!done) {
+                // 터널 URL 없으면 3초마다 재시도 (최대 30초)
+                let attempts = 0;
+                const interval = setInterval(async () => {
+                    attempts++;
+                    const done = await tryGenerate();
+                    if (done || attempts >= 10) clearInterval(interval);
+                }, 3000);
+            }
+        });
+    }, [view]);  // view 바뀔 때마다 재실행
+
+    /* 카메라 연결 끊김 감지 → streamAlive 갱신 + QR 재생성 */
+    const prevHasFrame = useRef(false);
+    useEffect(() => {
+        if (view !== 'coach') return;
+        if (!status.has_frame) setStreamAlive(false);
+        // 연결됐다가 끊긴 경우 (true → false)
+        if (prevHasFrame.current && !status.has_frame) {
+            fetch('/config', {cache: 'no-store'})
+                .then(r => r.json())
+                .then(cfg => {
+                    const mobileUrl = cfg.mobile_url
+                        ? cfg.mobile_url.replace(/[/]$/, '') + '/mobile'
+                        : window.location.protocol + '//' + window.location.host + '/mobile';
+                    try {
+                        const qr = qrcode(0, 'L');
+                        qr.addData(mobileUrl);
+                        qr.make();
+                        setQrCodeUrl(qr.createDataURL(4, 1));
+                    } catch(e) {}
+                })
+                .catch(() => {});
+        }
+        prevHasFrame.current = status.has_frame;
+    }, [status.has_frame, view]);
+
 
     useEffect(() => {
         if (isDemo) return;
@@ -717,6 +776,7 @@ function PCView() {
                 const data = await res.json();
                 setStatus(data);
                 statusRef.current = data;
+                setStreamAlive(!!data.has_frame); // 스트림 표시 여부 동기화
                 if (data.is_analyzed && data.manual_steps?.length > 0 && view === 'upload' && !uploading && !isNewStart) {
                     setView('coach');
                 }
@@ -1049,9 +1109,11 @@ function PCView() {
                     <main style={{flex:1, display:'flex', flexDirection:'column', minWidth:0}}>
                         <div className="stream-frame" style={{flex:1, display:'flex', flexDirection:'column'}}>
                             <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center'}}>
-                                {status.has_frame ? (
-                                    <img src="/stream" alt="Live stream"
-                                         style={{width:'100%', height:'100%', objectFit:'contain'}}/>
+                                {streamAlive ? (
+                                    <img key="stream-live" src="/stream" alt="Live stream"
+                                         style={{width:'100%', height:'100%', objectFit:'contain'}}
+                                         onLoad={() => setStreamAlive(true)}
+                                         onError={() => setStreamAlive(false)}/>
                                 ) : (
                                     /* ── QR 코드 표시 (미연결 시) ── */
                                     <div style={{textAlign:'center', color:'#666', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%'}}>

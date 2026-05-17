@@ -26,6 +26,28 @@ from livekit import rtc
 
 load_dotenv()
 
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+import threading, re as _re
+
+def _find_cloudflared():
+    """프로젝트 루트 또는 PATH에서 cloudflared 바이너리 찾기"""
+    candidates = [
+        os.path.join(BASE_DIR, "cloudflared-linux-amd64"),
+        os.path.join(BASE_DIR, "cloudflared"),
+        "/usr/local/bin/cloudflared",
+        "cloudflared",
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            os.chmod(c, 0o755)
+            return c
+    return None
+
+CLOUDFLARED_BIN = _find_cloudflared()
+
 try:
     import opendataloader_pdf
 except ImportError:
@@ -116,6 +138,7 @@ frame_count     = 0
 LIVEKIT_URL   = os.getenv("LIVEKIT_URL",   "wss://capstone-project-jvy5e1z6.livekit.cloud")
 LIVEKIT_TOKEN = os.getenv("LIVEKIT_TOKEN")   # 서버(Python SDK)용 토큰
 MOBILE_TOKEN  = os.getenv("MOBILE_TOKEN")    # 모바일 브라우저용 토큰
+MOBILE_URL    = os.getenv("MOBILE_URL", "")  # Cloudflare 등 외부 접속 URL (QR용)
 
 # ── 세션 저장/복원 ─────────────────────────────────────────────────────────
 def save_session():
@@ -251,14 +274,22 @@ async def process_video_track(track: rtc.VideoTrack):
     async def process_loop():
         """처리 전용 — 최신 프레임을 가져와 heavy_processing 실행."""
         global latest_raw_frame
-        skip_count = 0  # 프레임 스킵 카운터
+        skip_count = 0
+        last_frame_time = time.time()  # 마지막 프레임 수신 시각
 
         while True:
-            await asyncio.sleep(0.01)  # 10ms 폴링
+            await asyncio.sleep(0.01)
 
             frame = latest_raw_frame
             if frame is None:
+                # 마지막 프레임으로부터 3초 이상 경과 → 연결 끊김으로 판단
+                if time.time() - last_frame_time > 3.0 and state["latest_frame"] is not None:
+                    state["latest_frame"] = None
+                    state["log"] = "모바일 연결 끊김"
+                    print("⚠️ [STREAM] 프레임 타임아웃 — 연결 끊김으로 판단")
                 continue
+
+            last_frame_time = time.time()  # 프레임 수신 시각 갱신
 
             latest_raw_frame = None  # 처리 시작 — 소비
 
@@ -395,12 +426,48 @@ async def coaching_loop():
                             save_session()
             await asyncio.sleep(3.0)
         else:
+            # 카메라 미연결 시 ai_result 초기화
+            if not state["latest_frame"] and state["ai_result"] not in ("WAIT",):
+                state["ai_result"]   = "WAIT"
+                state["ai_response"] = "모바일 카메라를 연결해 주세요."
             await asyncio.sleep(1.0)
 
 # ── FastAPI 앱 ─────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_session()
+
+    # Cloudflare 터널 자동 시작 — MOBILE_URL이 .env에 없을 때만
+    if CLOUDFLARED_BIN and not os.getenv("MOBILE_URL"):
+        def _run_tunnel():
+            try:
+                proc = subprocess.Popen(
+                    [CLOUDFLARED_BIN, "tunnel", "--url", "http://localhost:8000"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                # cloudflared는 stderr로 로그 출력
+                for line in proc.stderr:
+                    line = line.strip()
+                    if "trycloudflare" in line.lower() or "tunnel" in line.lower():
+                        print(f"🔍 [CF 로그] {line}")
+                    match = _re.search(r'https://[a-z0-9-]+[.]trycloudflare[.]com', line)
+                    if match:
+                        os.environ["MOBILE_URL"] = match.group(0)
+                        print(f"✅ [Cloudflare] 터널 시작: {match.group(0)}")
+                        break
+            except Exception as e:
+                print(f"⚠️ [Cloudflare] 터널 실패: {e}")
+        threading.Thread(target=_run_tunnel, daemon=True).start()
+        # URL이 잡힐 때까지 최대 10초 대기
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            if os.getenv("MOBILE_URL"):
+                break
+        if not os.getenv("MOBILE_URL"):
+            print("⚠️ [Cloudflare] URL 감지 실패 — QR은 현재 URL 기반으로 생성됩니다")
+    elif not CLOUDFLARED_BIN:
+        print("ℹ️ [Cloudflare] cloudflared 바이너리 없음 — 터널 미사용")
+
     coaching_task = asyncio.create_task(coaching_loop())
     livekit_task  = asyncio.create_task(run_livekit())
     yield
@@ -453,10 +520,15 @@ async def ping_check(body: dict):
 @app.get("/config")
 async def get_config():
     """프론트엔드에 LiveKit 접속 정보 전달 — 토큰을 env에서 읽어 반환"""
-    return {
-        "livekit_url":   LIVEKIT_URL,
-        "mobile_token":  MOBILE_TOKEN or "",
-    }
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content={
+            "livekit_url":  LIVEKIT_URL,
+            "mobile_token": MOBILE_TOKEN or "",
+            "mobile_url":   os.getenv("MOBILE_URL", ""),  # 항상 최신값 반환
+        },
+        headers={"Cache-Control": "no-store"}
+    )
 
 # ── 매뉴얼 파싱 ───────────────────────────────────────────────────────────
 async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: str) -> list:
