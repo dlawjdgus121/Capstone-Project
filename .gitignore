@@ -20,6 +20,7 @@ data/ref_images/*
 config.py
 secrets.json
 *.env
+certs/
 
 # --- [4] 아두이노/PlatformIO 빌드 파일 ---
 .pio/

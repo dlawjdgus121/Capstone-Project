@@ -1,4 +1,4 @@
-import io
+﻿import io
 import os
 import json
 import time
@@ -91,11 +91,12 @@ state = {
     "is_coaching_active": False,
     "step_locked": False,
     "progress_step": "upload",
-    "is_processing": False, # [추가] 하드웨어 연산 중복 방지
-    # WebRTC 추가 지표
+    "is_processing": False, 
     "client_send_time": 0.0,
     "last_rtt": 0.0,
     "current_fps": 0.0,
+    "webrtc_fps": 0.0,
+    "out_fps": 0.0,  # 🚀 [추가] 서버 -> PC 브라우저로 쏴주는 진짜 FPS
     "log": "모바일 연결 대기 중..."
 }
 
@@ -213,23 +214,36 @@ def heavy_processing(img_bgr):
     return buffer.tobytes(), detected_stepper_cmd
 
 # --- [실시간 코칭 인퍼런스 서버 통신] ---
+# --- [실시간 코칭 인퍼런스 서버 통신] ---
 async def call_runpod_inference(manual_img_path, camera_frame_bytes):
     if not RUNPOD_INFERENCE_URL:
         return {"result": "WAIT", "reason": "카메라 연결 대기 중..."}
     try:
         rel_path = manual_img_path.lstrip('/')
         full_manual_path = os.path.join(BASE_DIR, rel_path)
-        if not os.path.exists(full_manual_path): return {"result": "ERROR", "reason": "이미지 없음"}
+        
+        # 🚀 [디버깅용 로그 추가]
+        print(f"👀 [DEBUG] 전송할 목적지 URL: {RUNPOD_INFERENCE_URL}")
+        print(f"👀 [DEBUG] 매뉴얼 이미지 경로: {full_manual_path}")
 
+        if not os.path.exists(full_manual_path): return {"result": "ERROR", "reason": "이미지 없음"}
+        
+        # ... (이하 동일) ...
         async with httpx.AsyncClient() as client:
             files = {
                 "manual_image": ("manual.jpg", open(full_manual_path, "rb"), "image/jpeg"),
                 "camera_image": ("camera.jpg", io.BytesIO(camera_frame_bytes), "image/jpeg")
             }
-            data = {"prompt": "비교 분석 수행"}
-            response = await client.post(RUNPOD_INFERENCE_URL, files=files, data=data, timeout=15.0)
+            # 🚀 [수정] GPU 서버가 Form 데이터로 요구하는 web_send_time 파라미터 추가
+            data = {
+                "prompt": "비교 분석 수행",
+                "web_send_time": str(time.time())
+            }
+            response = await client.post(RUNPOD_INFERENCE_URL, files=files, data=data, timeout=10000.0)
             if response.status_code == 200:
+                
                 return response.json().get("prediction", {"result": "UNKNOWN", "reason": "분석 오류"})
+            
             return {"result": "ERROR", "reason": f"서버 오류: {response.status_code}"}
     except Exception as e:
         return {"result": "ERROR", "reason": f"통신 장애: {str(e)}"}
@@ -584,7 +598,11 @@ async def get_status():
         "is_analyzed": state["is_analyzed"], "current_step_idx": state["current_step_idx"],
         "ai_response": state["ai_response"], "analysis_time": state["analysis_time"],
         "progress_step": state["progress_step"], "step_locked": state["step_locked"],
-        "log": state["log"], "current_fps": state["current_fps"], "last_rtt": state["last_rtt"],
+        "log": state["log"], 
+        "current_fps": state["current_fps"], 
+        "webrtc_fps": state["webrtc_fps"], 
+        "out_fps": state.get("out_fps", 0.0), # 🚀 [추가] 프론트엔드로 전송
+        "last_rtt": state["last_rtt"],
         "has_frame": state["latest_frame"] is not None
     }
 
@@ -609,11 +627,24 @@ async def reset_session():
 @app.get("/stream")
 async def stream():
     async def gen():
+        # 🚀 [추가] 여기서 내보내는 횟수를 직접 카운트합니다.
+        frames_out = 0
+        last_calc_time = time.time()
+        
         while True:
-            if state["latest_frame"]: yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + state["latest_frame"] + b"\r\n")
-            await asyncio.sleep(0.04)
+            if state["latest_frame"]: 
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + state["latest_frame"] + b"\r\n")
+                
+                # 🚀 [추가] 1초마다 나간 프레임 수 계산
+                frames_out += 1
+                curr_time = time.time()
+                if curr_time - last_calc_time >= 1.0:
+                    state["out_fps"] = round(frames_out / (curr_time - last_calc_time), 1)
+                    frames_out = 0
+                    last_calc_time = curr_time
+                    
+            await asyncio.sleep(0.04) # 이론상 최대 25 FPS
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
-
 @app.post("/trigger-vlm")
 async def trigger_vlm_analysis():
     """프론트엔드에서 'VLM 분석' 버튼을 눌렀을 때 1회 호출되는 엔드포인트"""
@@ -670,18 +701,26 @@ async def process_video_track(track: rtc.VideoTrack):
     video_stream = rtc.VideoStream(track)
     loop = asyncio.get_event_loop()
 
-    # 🚀 [버전 호환성 해결] VideoFormatType 에러 방지
     try:
-        if hasattr(rtc, 'VideoFormatType'):
-            target_format = rtc.VideoFormatType.FORMAT_RGBA8888
-        else:
-            target_format = rtc.VideoBufferType.RGBA # 최신 버전 대응
+        if hasattr(rtc, 'VideoFormatType'): target_format = rtc.VideoFormatType.FORMAT_RGBA8888
+        else: target_format = rtc.VideoBufferType.RGBA
     except:
-        target_format = 3 # RGBA 기본 정수값
+        target_format = 3 
+
+    # 🚀 [추가] 순수 수신 FPS 계산용 변수
+    webrtc_frames = 0
+    webrtc_last_calc_time = time.time()
 
     async for event in video_stream:
         await asyncio.sleep(0.001)
         curr_time = time.time()
+        
+        # 🚀 [추가] 1초마다 수신된 프레임 수(FPS) 계산
+        webrtc_frames += 1
+        if curr_time - webrtc_last_calc_time >= 1.0:
+            state["webrtc_fps"] = round(webrtc_frames / (curr_time - webrtc_last_calc_time), 1)
+            webrtc_frames = 0
+            webrtc_last_calc_time = curr_time
         
         if prev_frame_time > 0:
             diff = curr_time - prev_frame_time
@@ -689,22 +728,18 @@ async def process_video_track(track: rtc.VideoTrack):
         prev_frame_time = curr_time
         
         frame_count += 1
-        if frame_count % 2 != 0: continue # 2프레임 당 1프레임 연산 (최적화)
+        if frame_count % 2 != 0: continue 
 
         if state.get("is_processing", False): continue
         state["is_processing"] = True
 
         try:
-            # 🚀 영상 데이터를 RGBA -> BGR 변환 및 거울 모드
             rgba_frame = event.frame.convert(target_format)
             img = np.frombuffer(rgba_frame.data, dtype=np.uint8).reshape((rgba_frame.height, rgba_frame.width, 4))
             img_bgr = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
-            #img_bgr = cv2.flip(img_bgr, 1) # 거울 모드
 
-            # 별도 스레드에서 무거운 연산(MediaPipe + 하드웨어 제어) 수행
             frame_bytes, stepper_cmd = await loop.run_in_executor(None, heavy_processing, img_bgr)
             
-            # 스테퍼(UP/DOWN/STOP) 제어 명령 UDP 전송
             if stepper_cmd in ["STOP", "NONE"]:
                 if hw_state["current_stepper_state"] != "STOP":
                     sock.sendto(b'S', (ESP32_IP, UDP_PORT))
@@ -715,7 +750,6 @@ async def process_video_track(track: rtc.VideoTrack):
                     hw_state["current_stepper_state"] = stepper_cmd
 
             state["latest_frame"] = frame_bytes
-            state["log"] = f"📡 Stream | FPS: {round(state['current_fps'], 1):4} | ABS: {round(state['last_rtt']/2, 1):5}ms"
         except Exception as e:
             print(f"🚨 영상 처리 오류 상세: {e}")
         finally:

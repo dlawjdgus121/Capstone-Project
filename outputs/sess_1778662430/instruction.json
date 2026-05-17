@@ -1,0 +1,38 @@
+[
+    {
+        "step": 1,
+        "title": "STEP 1",
+        "desc": "정사각형 종이를 가로와 세로 방향으로 각각 반으로 접었다 펴서 십자 모양의 중심선을 만듭니다.",
+        "image_url": "/outputs/sess_1778662430/img_step_1_1778662442577.jpg"
+    },
+    {
+        "step": 2,
+        "title": "STEP 2",
+        "desc": "좌우 양쪽 모서리를 수직 중심선에 맞춰 안쪽으로 접어 모읍니다.",
+        "image_url": "/outputs/sess_1778662430/img_step_2_1778662442587.jpg"
+    },
+    {
+        "step": 3,
+        "title": "STEP 3",
+        "desc": "위쪽 모서리를 아래쪽 모서리에 맞닿도록 수평 중심선을 따라 아래로 반 접어 내립니다.",
+        "image_url": "/outputs/sess_1778662430/img_step_3_1778662442597.jpg"
+    },
+    {
+        "step": 4,
+        "title": "STEP 4",
+        "desc": "아래쪽의 뾰족한 끝부분을 표시된 점선을 따라 위쪽으로 접어 올립니다.",
+        "image_url": "/outputs/sess_1778662430/img_step_4_1778662442627.jpg"
+    },
+    {
+        "step": 5,
+        "title": "STEP 5",
+        "desc": "상단 양쪽 모서리를 대각선 방향으로 아래로 접어 귀를 만들고, 아래쪽 끝부분을 살짝 뒤로 접거나 내려 접어 코의 형태를 잡습니다.",
+        "image_url": "/outputs/sess_1778662430/img_step_5_1778662442633.jpg"
+    },
+    {
+        "step": 6,
+        "title": "STEP 6",
+        "desc": "종이를 뒤집어 완성된 형태를 확인하고 눈과 콧구멍을 그려서 돼지 얼굴을 완성합니다.",
+        "image_url": "/outputs/sess_1778662430/img_step_6_1778662442648.jpg"
+    }
+]

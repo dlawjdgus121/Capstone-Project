@@ -98,7 +98,7 @@
     const { useState, useEffect, useRef, useCallback } = React;
 
     const LIVEKIT_URL = "wss://capstone-project-jvy5e1z6.livekit.cloud";
-    const MOBILE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzc3ODY0MTQsImlkZW50aXR5IjoibWIiLCJpc3MiOiJBUElhWkpDOVE4cjJTeU4iLCJuYmYiOjE3Nzc3MDAwMTQsInN1YiI6Im1iIiwidmlkZW8iOnsiY2FuUHVibGlzaCI6dHJ1ZSwiY2FuUHVibGlzaERhdGEiOnRydWUsImNhblN1YnNjcmliZSI6dHJ1ZSwicm9vbSI6ImNkIiwicm9vbUpvaW4iOnRydWV9fQ.jsyCH6iMC6lSu02fKJ6qfx7bxDCWY_R2zZMGkzEg4Cc";
+    const MOBILE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzkwODQ3MzgsImlkZW50aXR5IjoibWIiLCJpc3MiOiJBUElhWkpDOVE4cjJTeU4iLCJuYmYiOjE3Nzg5OTgzMzgsInN1YiI6Im1iIiwidmlkZW8iOnsiY2FuUHVibGlzaCI6dHJ1ZSwiY2FuUHVibGlzaERhdGEiOnRydWUsImNhblN1YnNjcmliZSI6dHJ1ZSwicm9vbSI6ImNkIiwicm9vbUpvaW4iOnRydWV9fQ.k8nOAkmISUDPIVBZHuY_ThJfrllwQJLpkuGyCwD-X4I";
 
     /* ── [복구] 모바일 전용 송출 뷰 ── */
     /* ── [수정] 모바일 전용 송출 뷰 (좌우 반전 토글 적용) ── */
@@ -226,6 +226,9 @@
         const inputRef = useRef(null);
         const listRef = useRef(null);
         const stepRefs = useRef([]);
+        const [browserFps, setBrowserFps] = useState(0);
+        const frameCountRef = useRef(0);
+        const lastFpsTimeRef = useRef(Date.now());
         
         // ✨ [추가 1] QR 코드 URL 상태 관리
         const [qrCodeUrl, setQrCodeUrl] = useState('');
@@ -269,7 +272,18 @@
             return () => clearInterval(timer);
         }, [view, uploading]);
 
-        
+        // 🚀 [추가] 이미지가 바뀔 때마다 FPS를 측정하는 함수 (useEffect들 근처에 배치)
+        const handleImageLoad = () => {
+            frameCountRef.current += 1;
+            const now = Date.now();
+            const diff = now - lastFpsTimeRef.current;
+            
+            if (diff >= 1000) { // 1초마다 갱신
+                setBrowserFps((frameCountRef.current / (diff / 1000)).toFixed(1));
+                frameCountRef.current = 0;
+                lastFpsTimeRef.current = now;
+            }
+        };
 
         const uploadFiles = async (files) => {
             if (!files || !files.length) return;
@@ -369,13 +383,17 @@
                     <button onClick={goHome} className="py-4 rounded-[1.5rem] bg-slate-900/70 border border-white/6 text-slate-400 font-black uppercase text-xs">홈으로</button>
                 </div>
 
-                {/* [중앙] 메인 영상 피드 (크기 확대 및 카메라 연결) */}
-<div className="flex-1 flex flex-col justify-center items-center">
-    <div className="video-fixed-ratio">
-        {status.has_frame ? (
-            /* 영상 수신 중: 거울모드 유지 */
-            <img src="/stream" className="-scale-x-100 w-full h-full object-cover" alt="Live Feed" />
-        ) : qrCodeUrl ? (
+{/* 중앙 영상 피드 (onLoad 이벤트 삭제) */}
+                <div className="flex-1 flex flex-col justify-center items-center">
+                    <div className="video-fixed-ratio">
+                        {status.has_frame ? (
+                            <img 
+                                src="/stream" 
+                                className="-scale-x-100 w-full h-full object-cover" 
+                                alt="Live Feed" 
+                            />
+                        ) : qrCodeUrl ? (
+                        // ... 기존 QR 코드 및 대기 화면 코드는 유지 ...
             /* ✨ [추가 3] 영상이 안 들어올 때 QR 코드 표시! */
             <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center">
                 <div className="bg-white p-4 rounded-[2rem] shadow-[0_0_50px_rgba(59,130,246,0.3)] mb-6">
@@ -394,11 +412,14 @@
 
                         {/* 영상 위 지표(OSD) */}
                         <div className="absolute top-8 left-8 flex gap-4 z-20">
-                            <div className="glass px-4 py-2 rounded-2xl text-xs font-mono text-slate-200 border-white/5 osd-shadow">
-                                FPS: {Math.round(status.current_fps)}
+                            <div className="glass px-4 py-2 rounded-2xl text-xs font-mono border-white/5 osd-shadow flex flex-col gap-1">
+                                <div className="text-blue-400 font-black">IN (Mobile ➔ Server): {status.webrtc_fps || 0} FPS</div>
+                                {/* 🚀 [수정] 서버가 정확히 보내주는 값으로 출력 */}
+                                <div className="text-emerald-400 font-black">OUT (Server ➔ PC): {status.out_fps || 0} FPS</div>
+                                <div className="text-slate-300 font-bold mt-1 pt-1 border-t border-white/10">서버 내부 연산: {Math.round(status.current_fps)} FPS</div>
                             </div>
-                            <div className="glass px-4 py-2 rounded-2xl text-xs font-mono text-slate-200 border-white/5 osd-shadow">
-                                ABS: {Math.round(status.last_rtt/2)}ms
+                            <div className="glass px-4 py-2 rounded-2xl text-xs font-mono text-slate-200 border-white/5 osd-shadow h-fit">
+                                RTT: {Math.round(status.last_rtt)}ms (핑 미구현)
                             </div>
                         </div>
 
