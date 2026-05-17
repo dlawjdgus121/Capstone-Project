@@ -13,18 +13,16 @@ import numpy as np
 import socket
 import math
 import mediapipe as mp
-from typing import List, Set
+from typing import List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile, Request
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from dotenv import load_dotenv
 
-# aiortc
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-from aiortc.contrib.media import MediaRelay
+from livekit import rtc
 
 load_dotenv()
 
@@ -72,19 +70,22 @@ hands    = mp_hands.Hands(
 )
 
 # ── 적응형 스트리밍 레벨 정의 ────────────────────────────────────────────────
+# level: (width, height, jpeg_quality, label)
 STREAM_LEVELS = {
-    0: (426,  240, 40, "저화질 240p"),
-    1: (640,  360, 55, "중간 360p"),
-    2: (960,  540, 70, "고화질 540p"),
-    3: (1280, 720, 85, "최고 720p"),
+    0: (426,  240, 40, "저화질 240p"),   # 극저대역폭 — ~0.5Mbps
+    1: (640,  360, 55, "중간 360p"),     # 저대역폭   — ~1.5Mbps
+    2: (960,  540, 70, "고화질 540p"),   # 일반       — ~3Mbps
+    3: (1280, 720, 85, "최고 720p"),     # 고대역폭   — ~6Mbps
 }
 FPS_THRESHOLDS = {
-    "down": 15,
-    "up":   25,
+    # (하락 임계값, 상승 임계값) — N초 평균 기준
+    "down": 15,   # 평균 FPS가 이 이하면 레벨 낮춤
+    "up":   25,   # 평균 FPS가 이 이상이면 레벨 올림
 }
-ADAPTIVE_WINDOW = 5
+ADAPTIVE_WINDOW = 5  # 최근 몇 개의 FPS 샘플로 판단할지
 
-latest_raw_frame = None
+# ── 최신 프레임 버퍼 (블로킹 없이 항상 최신 프레임만 유지) ────────────────
+latest_raw_frame = None   # VideoFrame 객체
 
 # ── 시스템 상태 ────────────────────────────────────────────────────────────
 state = {
@@ -98,19 +99,23 @@ state = {
     "step_locked":    False,
     "progress_step":  "upload",
     "current_fps":    0.0,
-    "last_rtt":       0.0,
+    "last_rtt":       0.0,    # ms 단위 RTT
     "is_processing":  False,
-    "stream_level":   2,
-    "fps_history":    [],
+    # 적응형 스트리밍 — FPS 기반 자동 품질 조절
+    "stream_level":   2,      # 0=저화질, 1=중간, 2=고화질
+    "fps_history":    [],     # 최근 FPS 기록 (평균 계산용)
     "log":            "모바일 연결 대기 중...",
 }
 
-SESSION_FILE    = os.path.join(OUTPUT_DIR, "last_session.json")
+SESSION_FILE   = os.path.join(OUTPUT_DIR, "last_session.json")
 prev_frame_time = 0.0
 frame_count     = 0
 
-pcs: Set[RTCPeerConnection] = set()
-relay = MediaRelay()
+# LiveKit 설정
+# LiveKit 설정
+LIVEKIT_URL   = os.getenv("LIVEKIT_URL",   "wss://capstone-project-jvy5e1z6.livekit.cloud")
+LIVEKIT_TOKEN = os.getenv("LIVEKIT_TOKEN")   # 서버(Python SDK)용 토큰
+MOBILE_TOKEN  = os.getenv("MOBILE_TOKEN")    # 모바일 브라우저용 토큰
 
 # ── 세션 저장/복원 ─────────────────────────────────────────────────────────
 def save_session():
@@ -179,7 +184,7 @@ def heavy_processing(img_bgr, level=2):
         h, w = img_bgr.shape[:2]
 
     detected_stepper_cmd = "NONE"
-    mp_input = cv2.resize(img_bgr, (160, 120))
+    mp_input = cv2.resize(img_bgr, (160, 120))  # 속도 최적화: 160x120으로 축소
     results  = hands.process(cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB))
 
     if results.multi_hand_landmarks and results.multi_handedness:
@@ -197,48 +202,74 @@ def heavy_processing(img_bgr, level=2):
                 elif f_status == [True, True, False, False]:
                     detected_stepper_cmd = "DOWN" if hand_lms.landmark[8].y < hand_lms.landmark[0].y else "UP"
 
+    # 적응형 스트리밍 — 현재 레벨에 맞는 해상도/품질로 인코딩
     out_w, out_h, quality, _ = STREAM_LEVELS[level]
     img_out = cv2.resize(img_bgr, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
     _, buf  = cv2.imencode('.jpg', img_out, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return buf.tobytes(), detected_stepper_cmd
 
-# ── aiortc 비디오 트랙 수신 ────────────────────────────────────────────────
-async def process_webrtc_track(track):
+# ── LiveKit 비디오 트랙 수신 ─────────────────────────────────────────────
+async def process_video_track(track: rtc.VideoTrack):
+    """
+    [최적화] 수신 루프와 처리 루프를 분리.
+    - 수신 루프: 최신 프레임만 버퍼에 저장 (블로킹 없음)
+    - 처리 루프: 별도 태스크에서 최신 프레임만 골라 처리
+    """
     global latest_raw_frame, prev_frame_time
     loop = asyncio.get_event_loop()
 
+    video_stream = rtc.VideoStream(track)
+    try:
+        target_format = rtc.VideoFormatType.FORMAT_RGBA8888
+    except AttributeError:
+        try:
+            target_format = rtc.VideoBufferType.RGBA
+        except AttributeError:
+            target_format = 3
+
     async def recv_loop():
+        """프레임 수신 전용 — 최신 프레임만 유지, 처리 대기 없음."""
         global latest_raw_frame, prev_frame_time
-        while True:
+        async for event in video_stream:
             try:
-                frame = await track.recv()
-                latest_raw_frame = frame
+                rgba_frame = event.frame.convert(target_format)
+                latest_raw_frame = rgba_frame
+
                 curr_time = time.time()
                 if prev_frame_time > 0:
                     diff = curr_time - prev_frame_time
                     if diff > 0.01:
                         state["current_fps"] = 1.0 / diff
                 prev_frame_time = curr_time
-            except Exception:
+            except Exception as e:
+                print(f"🚨 수신 오류: {e}")
                 latest_raw_frame = None
                 state["latest_frame"] = None
                 state["log"] = "모바일 연결 끊김"
                 break
 
     async def process_loop():
+        """처리 전용 — 최신 프레임을 가져와 heavy_processing 실행."""
         global latest_raw_frame
-        skip_count = 0
+        skip_count = 0  # 프레임 스킵 카운터
+
         while True:
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.01)  # 10ms 폴링
+
             frame = latest_raw_frame
             if frame is None:
                 continue
-            latest_raw_frame = None
+
+            latest_raw_frame = None  # 처리 시작 — 소비
+
+            # FPS 기반 적응형 스킵 (FPS 낮으면 더 많이 스킵)
             skip_count += 1
             cur_fps   = state["current_fps"]
-            skip_rate = 3 if cur_fps < 15 else 2
+            skip_rate = 3 if cur_fps < 15 else 2  # 저FPS: 3프레임당 1, 고FPS: 2프레임당 1
             if skip_count % skip_rate != 0:
                 continue
+
+            # FPS 히스토리 → 적응형 레벨 조절
             fps = state["current_fps"]
             if fps > 0:
                 history = state["fps_history"]
@@ -258,12 +289,19 @@ async def process_webrtc_track(track):
                         _, _, _, label = STREAM_LEVELS[state["stream_level"]]
                         print(f"📈 [ADAPTIVE] 평균 {avg_fps:.1f}fps → 레벨 올림: {label}")
                         history.clear()
+
             try:
-                img_rgb = frame.to_ndarray(format="rgb24")
-                img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+                # LiveKit RGBA 프레임 → numpy BGR 변환
+                img = np.frombuffer(frame.data, dtype=np.uint8).reshape(
+                    (frame.height, frame.width, 4)
+                )
+                img_bgr = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+
                 frame_bytes, stepper_cmd = await loop.run_in_executor(
                     None, heavy_processing, img_bgr, state["stream_level"]
                 )
+
+                # 스테퍼 명령 전송
                 if stepper_cmd in ["STOP", "NONE"]:
                     if hw_state["current_stepper_state"] != "STOP":
                         sock.sendto(b'S', (ESP32_IP, UDP_PORT))
@@ -272,11 +310,13 @@ async def process_webrtc_track(track):
                     if stepper_cmd != hw_state["current_stepper_state"]:
                         sock.sendto(stepper_cmd[0].encode(), (ESP32_IP, UDP_PORT))
                         hw_state["current_stepper_state"] = stepper_cmd
+
                 state["latest_frame"] = frame_bytes
                 state["log"] = f"📡 WebRTC | FPS: {round(state['current_fps'], 1)}"
             except Exception as e:
                 print(f"🚨 영상 처리 오류: {e}")
 
+    # 수신 + 처리 루프 동시 실행 (LiveKit)
     await asyncio.gather(recv_loop(), process_loop())
 
 # ── RunPod 추론 ────────────────────────────────────────────────────────────
@@ -284,7 +324,7 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
     if not RUNPOD_INFERENCE_URL:
         return {"result": "WAIT", "reason": "카메라 연결 대기 중..."}
     try:
-        rel_path         = manual_img_path.lstrip('/')
+        rel_path        = manual_img_path.lstrip('/')
         full_manual_path = os.path.join(BASE_DIR, rel_path)
         if not os.path.exists(full_manual_path):
             return {"result": "ERROR", "reason": "이미지 없음"}
@@ -318,14 +358,17 @@ Example: "접힌 형태가 확인됩니다." → PASS / "접기가 전혀 되지
             )
             if response.status_code == 200:
                 pred = response.json().get("prediction", {"result": "UNKNOWN", "reason": "분석 오류"})
+                # reason이 너무 길면 첫 문장만 잘라내기
                 reason = pred.get("reason", "")
                 if reason:
+                    # 첫 문장 추출 (마침표/줄바꿈 기준)
                     for sep in ['. ', '.\n', '\n']:
                         if sep in reason:
                             first = reason.split(sep)[0].strip()
                             if len(first) > 5:
                                 reason = first
                                 break
+                    # 그래도 60자 초과면 강제 자름
                     if len(reason) > 60:
                         reason = reason[:60] + "..."
                     pred["reason"] = reason
@@ -359,50 +402,61 @@ async def coaching_loop():
 async def lifespan(app: FastAPI):
     load_session()
     coaching_task = asyncio.create_task(coaching_loop())
+    livekit_task  = asyncio.create_task(run_livekit())
     yield
     coaching_task.cancel()
-    for pc in pcs:
-        await pc.close()
+    livekit_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-# ── 정적 파일 서빙 ─────────────────────────────────────────────────────────
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 
-# ── WebRTC 시그널링 ────────────────────────────────────────────────────────
-@app.post("/offer")
-async def webrtc_offer(request: Request):
-    body = await request.json()
-    pc   = RTCPeerConnection()
-    pcs.add(pc)
+# ── LiveKit WebRTC ──────────────────────────────────────────────────────────
+async def run_livekit():
+    room = rtc.Room()
 
-    @pc.on("connectionstatechange")
-    async def on_connectionstatechange():
-        print(f"🔗 WebRTC 연결 상태: {pc.connectionState}")
-        if pc.connectionState in ("failed", "closed"):
-            await pc.close()
-            pcs.discard(pc)
-            state["latest_frame"] = None
-            state["log"]          = "모바일 연결 끊김"
+    @room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        if track.kind == rtc.TrackKind.KIND_VIDEO:
+            print("📹 LiveKit 비디오 트랙 수신 시작")
+            asyncio.create_task(process_video_track(track))
 
-    @pc.on("track")
-    def on_track(track):
-        if track.kind == "video":
-            print("📹 비디오 트랙 수신 시작")
-            asyncio.create_task(process_webrtc_track(relay.subscribe(track)))
+    @room.on("data_received")
+    def on_data_received(data: rtc.DataPacket):
+        try:
+            payload = json.loads(data.data.decode("utf-8"))
+            if payload.get("type") == "ping":
+                state["client_send_time"] = payload.get("send_time")
+                resp = json.dumps({"type": "pong", "client_time": payload.get("send_time")})
+                asyncio.create_task(
+                    room.local_participant.publish_data(resp.encode("utf-8"))
+                )
+            elif payload.get("type") == "metrics":
+                state["last_rtt"] = float(payload.get("rtt", 0.0))
+        except:
+            pass
 
-    await pc.setRemoteDescription(RTCSessionDescription(sdp=body["sdp"], type=body["type"]))
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+    try:
+        if not LIVEKIT_TOKEN:
+            print("🚨 [ERROR] LIVEKIT_TOKEN이 .env 파일에 없습니다!")
+            return
+        await room.connect(LIVEKIT_URL, LIVEKIT_TOKEN)
+        print("✅ [SYSTEM] LiveKit 서버 접속 성공")
+    except Exception as e:
+        print(f"🚨 [ERROR] LiveKit 접속 실패: {e}")
 
-    gather_start = time.time()
-    while pc.iceGatheringState != "complete":
-        await asyncio.sleep(0.1)
-        if time.time() - gather_start > 3.0:
-            break
+@app.post("/ping")
+async def ping_check(body: dict):
+    """클라이언트 RTT 측정용"""
+    return {"pong": True, "client_time": body.get("client_time", 0)}
 
-    return JSONResponse({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
+@app.get("/config")
+async def get_config():
+    """프론트엔드에 LiveKit 접속 정보 전달 — 토큰을 env에서 읽어 반환"""
+    return {
+        "livekit_url":   LIVEKIT_URL,
+        "mobile_token":  MOBILE_TOKEN or "",
+    }
 
 # ── 매뉴얼 파싱 ───────────────────────────────────────────────────────────
 async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: str) -> list:
@@ -516,13 +570,6 @@ async def handle_manual(files: List[UploadFile] = File(...)):
     os.makedirs(job_dir, exist_ok=True)
     all_steps = []
 
-    # 실시간 경과 시간 업데이트 태스크
-    async def update_elapsed():
-        while not state["is_analyzed"]:
-            state["analysis_time"] = round(time.time() - start_time, 1)
-            await asyncio.sleep(0.5)
-    elapsed_task = asyncio.create_task(update_elapsed())
-
     async with httpx.AsyncClient() as client:
         for f in files:
             file_path = os.path.join(job_dir, f.filename)
@@ -572,7 +619,6 @@ async def handle_manual(files: List[UploadFile] = File(...)):
     with open(os.path.join(job_dir, "instruction.json"), "w", encoding="utf-8") as f:
         json.dump(filtered, f, ensure_ascii=False, indent=4)
 
-    elapsed_task.cancel()
     state.update({"manual_steps": filtered, "is_analyzed": True,
                   "analysis_time": round(time.time()-start_time, 2),
                   "current_step_idx": 0, "progress_step": "done"})
@@ -624,10 +670,6 @@ async def reset_session():
         os.remove(SESSION_FILE)
     return {"status": "ok"}
 
-@app.post("/ping")
-async def ping_check(body: dict):
-    return {"pong": True, "client_time": body.get("client_time", 0)}
-
 @app.post("/trigger-vlm")
 async def trigger_vlm_analysis():
     if not state["is_analyzed"] or not state["manual_steps"]:
@@ -656,13 +698,6 @@ async def trigger_vlm_analysis():
     else:
         err = prediction.get("reason", "응답 없음") if prediction else "응답 없음"
         return {"status": "error", "message": f"VLM 실패: {err}"}
-
-@app.get("/model/{filename}")
-async def serve_model(filename: str):
-    model_path = os.path.join(BASE_DIR, filename)
-    if not os.path.exists(model_path):
-        return JSONResponse({"error": "파일 없음"}, status_code=404)
-    return FileResponse(model_path, media_type="model/gltf-binary")
 
 @app.get("/stream")
 async def stream():
