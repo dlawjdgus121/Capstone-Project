@@ -1,0 +1,86 @@
+[
+    {
+        "step": 1,
+        "title": "Step 1",
+        "desc": "정사각형 종이를 대각선 방향으로 반으로 접습니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_1_1779095396004.jpg"
+    },
+    {
+        "step": 2,
+        "title": "Step 2",
+        "desc": "삼각형을 다시 반으로 접습니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_2_1779095396010.jpg"
+    },
+    {
+        "step": 3,
+        "title": "Step 3",
+        "desc": "한쪽 주머니를 벌려 사각형 모양이 되도록 눌러 접습니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_3_1779095396011.jpg"
+    },
+    {
+        "step": 4,
+        "title": "Step 4",
+        "desc": "반대쪽도 같은 방식으로 사각형 주머니 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_4_1779095396012.jpg"
+    },
+    {
+        "step": 5,
+        "title": "Step 5",
+        "desc": "종이를 뒤집어 반대쪽 모양을 확인합니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_5_1779095396012.jpg"
+    },
+    {
+        "step": 6,
+        "title": "Step 6",
+        "desc": "중심선에 맞춰 양옆을 접고, 윗부분도 접었다 폅니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_6_1779095396020.jpg"
+    },
+    {
+        "step": 7,
+        "title": "Step 7",
+        "desc": "Fold the other side and do the same as shown in step 6.",
+        "image_url": "/outputs/sess_1779095373/img_step_7_1779095396020.jpg"
+    },
+    {
+        "step": 8,
+        "title": "Step 8",
+        "desc": "아래쪽 양옆을 중심선에 맞춰 좁게 접습니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_8_1779095396021.jpg"
+    },
+    {
+        "step": 9,
+        "title": "Step 9",
+        "desc": "Fold the other side the same as shown in step 8.",
+        "image_url": "/outputs/sess_1779095373/img_step_9_1779095396021.jpg"
+    },
+    {
+        "step": 10,
+        "title": "Step 10",
+        "desc": "아랫부분을 벌려 위로 들어 올리며 접습니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_10_1779095396021.jpg"
+    },
+    {
+        "step": 11,
+        "title": "Step 11",
+        "desc": "목과 꼬리가 될 부분을 안쪽으로 접어 올립니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_11_1779095396021.jpg"
+    },
+    {
+        "step": 12,
+        "title": "Step 12",
+        "desc": "Make face by folding toward inside.",
+        "image_url": "/outputs/sess_1779095373/img_step_12_1779095396022.jpg"
+    },
+    {
+        "step": 13,
+        "title": "Step 13",
+        "desc": "Stretch the wings, and blow up the body through a hole underneath.",
+        "image_url": "/outputs/sess_1779095373/img_step_13_1779095396022.jpg"
+    },
+    {
+        "step": 14,
+        "title": "Finished",
+        "desc": "학 종이접기가 완성된 모습입니다.",
+        "image_url": "/outputs/sess_1779095373/img_step_14_1779095396022.jpg"
+    }
+]

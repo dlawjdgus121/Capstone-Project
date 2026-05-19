@@ -1,0 +1,104 @@
+[
+    {
+        "step": 1,
+        "title": "",
+        "desc": "정사각형 종이를 대각선 방향으로 반으로 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_1_1779155843921.jpg"
+    },
+    {
+        "step": 2,
+        "title": "",
+        "desc": "삼각형을 다시 반으로 접어 중심선을 만듭니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_2_1779155843955.jpg"
+    },
+    {
+        "step": 3,
+        "title": "",
+        "desc": "한쪽 날개를 벌려 눌러 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_3_1779155843955.jpg"
+    },
+    {
+        "step": 4,
+        "title": "",
+        "desc": "반대쪽도 같은 방식으로 눌러 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_4_1779155843956.jpg"
+    },
+    {
+        "step": 5,
+        "title": "",
+        "desc": "종이를 뒤집거나 방향을 바꿉니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_5_1779155843956.jpg"
+    },
+    {
+        "step": 6,
+        "title": "",
+        "desc": "중심을 향해 양쪽 날개를 모아 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_6_1779155843958.jpg"
+    },
+    {
+        "step": 7,
+        "title": "",
+        "desc": "정사각형 모양이 되도록 양쪽을 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_7_1779155843959.jpg"
+    },
+    {
+        "step": 8,
+        "title": "",
+        "desc": "아래쪽 끝을 위로 접어 올립니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_8_1779155843959.jpg"
+    },
+    {
+        "step": 9,
+        "title": "",
+        "desc": "안쪽 날개를 바깥쪽으로 펼치며 위로 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_9_1779155843960.jpg"
+    },
+    {
+        "step": 10,
+        "title": "",
+        "desc": "접힌 부분을 다듬어 마름모 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_10_1779155843960.jpg"
+    },
+    {
+        "step": 11,
+        "title": "",
+        "desc": "양옆을 중심선에 맞춰 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_11_1779155843961.jpg"
+    },
+    {
+        "step": 12,
+        "title": "",
+        "desc": "양쪽 날개를 바깥쪽으로 벌립니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_12_1779155843961.jpg"
+    },
+    {
+        "step": 13,
+        "title": "",
+        "desc": "위쪽 날개를 바깥쪽 대각선 방향으로 접습니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_13_1779155843962.jpg"
+    },
+    {
+        "step": 14,
+        "title": "",
+        "desc": "아래쪽 부분을 접어 다리 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_14_1779155843962.jpg"
+    },
+    {
+        "step": 15,
+        "title": "",
+        "desc": "다리 끝부분을 꺾어 발을 만듭니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_15_1779155843963.jpg"
+    },
+    {
+        "step": 16,
+        "title": "",
+        "desc": "몸통을 지그재그로 접어 점프할 수 있게 만듭니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_16_1779155843963.jpg"
+    },
+    {
+        "step": 17,
+        "title": "A Frog",
+        "desc": "완성된 개구리입니다.",
+        "image_url": "/outputs/sess_1779155831/img_step_17_1779155843964.jpg"
+    }
+]

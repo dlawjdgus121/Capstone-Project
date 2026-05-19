@@ -102,7 +102,7 @@
 
         .step-row {
             position: relative;
-            padding: 16px 18px 16px 22px;
+            padding: 22px 18px 22px 22px;
             border-bottom: 1px solid var(--line-2);
             cursor: pointer;
             transition: background 0.15s ease;
@@ -125,17 +125,17 @@
         }
 
         .img-well {
-            width: 100%; aspect-ratio: 4/3;
+            width: 100%; flex: 1;
             background: var(--bg);
             border: 1px solid var(--line-2);
             border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
             overflow: hidden; cursor: zoom-in;
             transition: border-color 0.18s ease;
-            position: relative;
+            position: relative; min-height: 0;
         }
         .img-well:hover { border-color: var(--ink); }
-        .img-well img { max-width:100%; max-height:100%; object-fit:contain; }
+        .img-well img { width:100%; height:100%; object-fit:contain; }
         .img-well-placeholder {
             width: 100%; height: 100%;
             background-image: repeating-linear-gradient(45deg, transparent 0 8px, rgba(17,17,17,0.04) 8px 9px);
@@ -226,7 +226,42 @@
         }
         @keyframes toast-in { from{opacity:0;transform:translate(-50%,12px)} to{opacity:1;transform:translate(-50%,0)} }
 
-        .fail-banner {
+        /* 사이드바 슬라이드 */
+        .sidebar {
+            transition: width 0.3s cubic-bezier(0.4,0,0.2,1),
+                        opacity 0.25s ease,
+                        min-width 0.3s cubic-bezier(0.4,0,0.2,1);
+            overflow: hidden;
+        }
+        .sidebar-toggle {
+            position: absolute; top: 50%; transform: translateY(-50%);
+            width: 20px; height: 48px;
+            background: var(--bg-2); border: 1px solid var(--line-2);
+            border-left: none; border-radius: 0 6px 6px 0;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            color: var(--ink-3); font-size: 10px;
+            transition: all 0.2s; z-index: 10;
+        }
+        .sidebar-toggle:hover { background: var(--bg); color: var(--ink); }
+
+        /* 전체 화면 플래시 — PASS/FAIL 피드백 */
+        @keyframes flash-pass {
+            0%   { opacity:0; }
+            15%  { opacity:0.5; }
+            100% { opacity:0; }
+        }
+        @keyframes flash-fail {
+            0%   { opacity:0; }
+            15%  { opacity:0.4; }
+            100% { opacity:0; }
+        }
+        .flash-overlay {
+            position:fixed; inset:0; z-index:9000; pointer-events:none;
+        }
+        .flash-overlay.pass { background:#00875a; animation:flash-pass 0.9s ease-out forwards; }
+        .flash-overlay.fail { background:#b3261e; animation:flash-fail 0.9s ease-out forwards; }
+
+                .fail-banner {
             display: flex; align-items: center; gap: 12px;
             padding: 10px 14px; margin-bottom: 10px;
             background: #fdf2f1;
@@ -585,40 +620,98 @@ function CompletionOverlay({ totalSteps, onRestart }) {
 }
 
 function UploadProgress({ status, onCancel }) {
-    const elapsed = status.analysis_time || 0;
-    const messages = [
-        '매뉴얼을 읽고 있어요…',
-        'AI가 페이지를 분석하고 있어요…',
-        '지시문을 추출하는 중이에요…',
-        '거의 다 됐어요…',
-        '조금만 더 기다려 주세요…',
-        '꼼꼼하게 확인하고 있어요…',
-    ];
-    const msgIdx = Math.floor(elapsed / 4) % messages.length;
+    const fileInfo = status.file_info || { name:'', pages:0, steps:0 };
+    const preview  = status.uploaded_preview || '';
+
+    // 프론트에서 직접 카운트 0.1초 단위
+    const [localElapsed, setLocalElapsed] = React.useState(0);
+    React.useEffect(() => {
+        setLocalElapsed(0);
+        const t = setInterval(() => setLocalElapsed(s => Math.round((s + 0.1) * 10) / 10), 100);
+        return () => clearInterval(t);
+    }, []);
+    const elapsed = localElapsed;
+
+    const stepLabels = {
+        upload:  '매뉴얼을 읽고 있어요…',
+        render:  '페이지를 이미지로 변환 중…',
+        analyze: '이미지를 크롭하는 중…',
+        done:    '완료',
+    };
+    const curText = stepLabels[status.progress_step] || '시작 중…';
 
     return (
-        <div style={{width:'100%', maxWidth:560, display:'flex', flexDirection:'column', alignItems:'center', gap:0, position:'relative'}}>
-            <div style={{width:'100%', height:340, borderRadius:12, overflow:'hidden', position:'relative',
-                         border:'1px solid var(--line)', background:'var(--bg-3)'}}>
-                <iframe src="https://my.spline.design/r4xbot-VuIwjjOzjo7Adg9NZ7lsu25N/"
-                        frameBorder="0" style={{width:'100%', height:'100%', pointerEvents:'all'}} title="R4X loading"/>
-                <div style={{position:'absolute', bottom:0, left:0, right:0, padding:'20px 24px',
-                             background:'linear-gradient(to top, rgba(245,245,247,0.95) 60%, transparent)'}}>
-                    <p style={{margin:'0 0 4px', fontSize:17, fontWeight:400, color:'var(--ink)', letterSpacing:'-0.01em', transition:'opacity 0.5s'}}>
-                        {messages[msgIdx]}
-                    </p>
-                    <p className="mono" style={{margin:0, fontSize:11, color:'var(--ink-4)', letterSpacing:'0.1em'}}>
-                        {elapsed > 0 ? `${elapsed}s 경과` : '시작 중…'}
-                    </p>
+        <div style={{width:'100%', maxWidth:780, display:'flex', flexDirection:'column', gap:12}}>
+
+            {/* 상단: 로봇 + 매뉴얼 미리보기 나란히 */}
+            <div style={{display:'flex', gap:12, alignItems:'stretch', height:300}}>
+
+                {/* 로봇 */}
+                <div style={{flex:'0 0 340px', borderRadius:14, overflow:'hidden',
+                             position:'relative', border:'1px solid var(--line)', background:'var(--bg-3)'}}>
+                    <iframe src="https://my.spline.design/r4xbot-VuIwjjOzjo7Adg9NZ7lsu25N/"
+                            frameBorder="0" style={{width:'100%', height:'100%', pointerEvents:'all'}}/>
+                    <div style={{position:'absolute', bottom:0, left:0, right:0, padding:'12px 16px',
+                                 background:'linear-gradient(to top, rgba(245,245,247,0.96) 55%, transparent)'}}>
+                        <p style={{margin:'0 0 1px', fontSize:14, fontWeight:400, color:'var(--ink)'}}>
+                            {curText}
+                        </p>
+                        <p className="mono" style={{margin:0, fontSize:10, color:'var(--ink-4)', letterSpacing:'0.08em'}}>
+                            {elapsed > 0 ? `${elapsed.toFixed(1)}s 경과` : '대기 중…'}
+                        </p>
+                    </div>
+                </div>
+
+                {/* 업로드된 매뉴얼 미리보기 */}
+                <div style={{flex:1, borderRadius:14, overflow:'hidden',
+                             border:'1px solid var(--line-2)', background:'var(--bg)',
+                             display:'flex', alignItems:'center', justifyContent:'center',
+                             position:'relative'}}>
+                    {preview ? (
+                        <>
+                            <img src={preview} alt="매뉴얼 미리보기"
+                                 style={{width:'100%', height:'100%', objectFit:'contain'}}/>
+                            {/* 파일명 오버레이 */}
+                            <div style={{position:'absolute', bottom:0, left:0, right:0,
+                                         padding:'8px 12px',
+                                         background:'linear-gradient(to top, rgba(245,245,247,0.95) 60%, transparent)'}}>
+                                <p className="mono" style={{margin:0, fontSize:10, color:'var(--ink-3)',
+                                     letterSpacing:'0.08em', overflow:'hidden',
+                                     textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                                    {fileInfo.name}
+                                </p>
+                            </div>
+                        </>
+                    ) : (
+                        <div style={{textAlign:'center', color:'var(--ink-4)'}}>
+                            <div style={{fontSize:32, marginBottom:8}}>📄</div>
+                            <div className="mono" style={{fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase'}}>
+                                {fileInfo.name || 'loading…'}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
-            <div className="surface" style={{width:'100%', padding:'20px 24px', borderTop:'none', borderRadius:'0 0 8px 8px'}}>
-                <div style={{height:2, background:'var(--line-2)', borderRadius:999, overflow:'hidden', marginBottom:16, position:'relative'}}>
-                    <div style={{position:'absolute', inset:0, background:`linear-gradient(90deg, transparent, var(--accent), transparent)`,
+
+            {/* 하단: 진행 바 + 취소 */}
+            <div className="surface" style={{padding:'14px 18px'}}>
+                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
+                    <span style={{fontSize:13, color:'var(--ink-2)'}}>{curText}</span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-4)'}}>
+                        {elapsed > 0 ? `${elapsed.toFixed(1)}s` : '—'}
+                    </span>
+                </div>
+                <div style={{height:2, background:'var(--line-2)', borderRadius:999,
+                             overflow:'hidden', marginBottom:12, position:'relative'}}>
+                    <div style={{position:'absolute', inset:0,
+                                 background:'linear-gradient(90deg, transparent, var(--accent), transparent)',
                                  animation:'wave-scan 2s ease-in-out infinite'}}/>
                 </div>
-                <button className="btn-quiet" onClick={onCancel} style={{width:'100%'}}>✕ 취소하고 처음으로</button>
+                <button className="btn-quiet" onClick={onCancel} style={{width:'100%'}}>
+                    ✕ 취소하고 처음으로
+                </button>
             </div>
+
             <style>{`@keyframes wave-scan { 0%{transform:translateX(-100%)} 100%{transform:translateX(200%)} }`}</style>
         </div>
     );
@@ -681,8 +774,14 @@ function PCView() {
     const [failReason, setFailReason] = useState('');
     const [passToast, setPassToast] = useState(false);
     const [rtt, setRtt] = useState(null);
+    const [flashType, setFlashType] = useState(null);  // 'pass' | 'fail' | null
+    const [sidebarOpen, setSidebarOpen] = useState(true);  // 왼쪽 사이드바 열림/닫힘
+    const [rightWidth, setRightWidth]       = useState(340);   // 오른쪽 패널 너비 (드래그 조절)
+    const rightDragRef                          = useRef(null);
     const [qrCodeUrl, setQrCodeUrl] = useState('');
     const [streamAlive, setStreamAlive] = useState(false);
+    const [previewSteps, setPreviewSteps] = useState([]);  // 파싱 프리뷰
+    const sseRef = useRef(null);
     const [showHelp, setShowHelp] = useState(false);
     const passTimerRef = useRef(null);
     const prevAiResult = useRef('WAIT');
@@ -768,6 +867,26 @@ function PCView() {
     }, [status.has_frame, view]);
 
 
+    /* SSE — upload + uploading 상태 진입 시 /preview-steps 연결 */
+    useEffect(() => {
+        if (view !== 'upload' || !uploading) return;
+        if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
+        const sse = new EventSource('/preview-steps');
+        sseRef.current = sse;
+        sse.onmessage = (e) => {
+            if (e.data === '__done__') { sse.close(); sseRef.current = null; return; }
+            try {
+                const newSteps = JSON.parse(e.data);
+                setPreviewSteps(prev => {
+                    const urls = new Set(prev.map(s => s.image_url));
+                    return [...prev, ...newSteps.filter(s => !urls.has(s.image_url))];
+                });
+            } catch(err) { console.error('SSE 파싱 오류:', err); }
+        };
+        sse.onerror = () => console.warn('SSE 연결 오류');
+        return () => { if (sseRef.current) { sseRef.current.close(); sseRef.current = null; } };
+    }, [view, uploading]);
+
     useEffect(() => {
         if (isDemo) return;
         const t = setInterval(async () => {
@@ -787,9 +906,13 @@ function PCView() {
 
     const uploadFiles = useCallback(async (files) => {
         if (!files || !files.length) return;
-        await fetch('/reset', {method:'POST'}).catch(()=>{});
+        // UI 먼저 전환 (reset은 백그라운드)
         setIsNewStart(false);
-        setUploading(true); setView('upload');
+        setStatus(prev => ({...prev, analysis_time:0, elapsed_time:0, progress_step:'upload', is_analyzed:false, manual_steps:[]}));
+        setPreviewSteps([]);
+        setUploading(true);
+        setView('upload');
+        fetch('/reset', {method:'POST'}).catch(()=>{});
         const fd = new FormData();
         for (let f of files) fd.append('files', f);
         try {
@@ -896,6 +1019,8 @@ function PCView() {
         prevAiResult.current = r;
         if (r === 'PASS') {
             if (passTimerRef.current) return;
+            setFlashType('pass');
+            setTimeout(() => setFlashType(null), 900);
             setPassToast(true);
             const latestIdx = statusRef.current.current_step_idx;
             setUserSelectedIdx(null); setFlashKey(k=>k+1);
@@ -903,6 +1028,8 @@ function PCView() {
             passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, 1800);
         } else if (r === 'FAIL') {
             if (passTimerRef.current) { clearTimeout(passTimerRef.current); passTimerRef.current=null; setPassToast(false); }
+            setFlashType('fail');
+            setTimeout(() => setFlashType(null), 900);
             const reason = (status.ai_response||'').replace(/^\[\w+\]\s*/,'').trim();
             setFailReason(reason); setShowFail(true);
             if (ttsOn) {
@@ -945,6 +1072,9 @@ function PCView() {
 
     return (
         <div style={{minHeight:'100vh', background:'var(--bg)', position:'relative'}}>
+
+            {/* 전체 화면 플래시 — PASS/FAIL 시각적 피드백 */}
+            {flashType && <div className={`flash-overlay ${flashType}`}/>}
 
             {showComplete && <CompletionOverlay totalSteps={totalSteps} onRestart={() => { setShowComplete(false); forceSetStep(0); }}/> }
             {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
@@ -995,6 +1125,7 @@ function PCView() {
                     <div className="landing-tag" style={{top:24, right:24, left:'auto'}}>step · 01</div>
                     {uploading
                         ? <UploadProgress status={status} onCancel={goHome}/>
+                        /* previewSteps가 쌓이면 파일 선택 화면에도 표시 */
                         : (
                             <div className="surface" style={{width:'100%', maxWidth:560, padding:'48px 44px'}}>
                                 <div className="label" style={{marginBottom:14}}>● 매뉴얼 입력</div>
@@ -1027,7 +1158,39 @@ function PCView() {
                 <div style={{display:'flex', gap:16, height:'100vh', padding:16, maxWidth:1700, margin:'0 auto'}}>
 
                     {/* LEFT */}
-                    <aside style={{width:300, display:'flex', flexDirection:'column', gap:12, minWidth:0}}>
+                    {/* 사이드바 열기 버튼 — 닫혔을 때만 */}
+                    {!sidebarOpen && (
+                        <div style={{position:'relative', width:0, display:'flex', alignItems:'center'}}>
+                            <button onClick={() => setSidebarOpen(true)}
+                                    style={{position:'absolute', left:4, top:'50%', transform:'translateY(-50%)',
+                                            width:22, height:52, background:'var(--bg-2)',
+                                            border:'1px solid var(--line-2)',
+                                            borderRadius:6, cursor:'pointer',
+                                            display:'flex', alignItems:'center', justifyContent:'center',
+                                            color:'var(--ink-3)', fontSize:11, zIndex:20}}>
+                                ▶
+                            </button>
+                        </div>
+                    )}
+                    <aside className="sidebar" style={{
+                        width: sidebarOpen ? 300 : 0,
+                        minWidth: sidebarOpen ? 300 : 0,
+                        opacity: sidebarOpen ? 1 : 0,
+                        display:'flex', flexDirection:'column', gap:12,
+                        position:'relative', flexShrink:0,
+                        overflow:'visible',
+                    }}>
+                        {/* 사이드바 닫기 핸들 — overflow visible로 밖으로 */}
+                        <button onClick={() => setSidebarOpen(false)}
+                                style={{position:'absolute', right:-11, top:'50%', transform:'translateY(-50%)',
+                                        width:22, height:52, background:'var(--bg-2)',
+                                        border:'1px solid var(--line-2)',
+                                        borderRadius:6, cursor:'pointer',
+                                        display:'flex', alignItems:'center', justifyContent:'center',
+                                        color:'var(--ink-3)', fontSize:11, zIndex:30,
+                                        boxShadow:'2px 0 8px rgba(0,0,0,0.06)'}}>
+                            ◀
+                        </button>
                         <div className="surface" style={{flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0}}>
                             <div style={{padding:'20px 22px 16px', borderBottom:'1px solid var(--line-2)', display:'flex',
                                          alignItems:'baseline', justifyContent:'space-between'}}>
@@ -1035,23 +1198,34 @@ function PCView() {
                                     <div className="label" style={{marginBottom:6}}>● Guide</div>
                                     <h3 style={{margin:0, fontSize:20, fontWeight:400, letterSpacing:'-0.015em'}}>조립 단계</h3>
                                 </div>
-                                <span className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em'}}>{status.analysis_time}s</span>
+                                <span className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em'}}>
+                                    {status.is_analyzed
+                                        ? `${status.analysis_time}s`
+                                        : status.progress_step !== 'upload'
+                                            ? `${status.elapsed_time ?? 0}s…`
+                                            : '—'}
+                                </span>
                             </div>
                             <div ref={listRef} className="scroll" style={{flex:1, overflowY:'auto', minHeight:0}}>
                                 {status.manual_steps?.length > 0 ? status.manual_steps.map((s, i) => (
                                     <div key={i} ref={el => stepRefs.current[i]=el} className="step-row"
                                          data-active={i===activeIdx} data-aifocus={i===status.current_step_idx}
-                                         onClick={() => forceSetStep(i)}>
-                                        <div style={{display:'flex', alignItems:'baseline', gap:10, marginBottom:4}}>
-                                            <span className="mono" style={{fontSize:10.5, letterSpacing:'0.18em', color:'var(--ink-4)'}}>
-                                                {String(s.step).padStart(2,'0')}
-                                            </span>
-                                            {i===status.current_step_idx && (
-                                                <span style={{fontSize:11, letterSpacing:'-0.005em', color:'var(--accent)', fontWeight:600}}>AI 지금</span>
-                                            )}
-                                        </div>
-                                        <p style={{margin:0, fontSize:14, fontWeight:500, lineHeight:1.4,
-                                                   color: i===activeIdx ? 'var(--ink)' : 'var(--ink-2)', wordBreak:'keep-all'}}>{s.title}</p>
+                                         onClick={() => forceSetStep(i)}
+                                         style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'22px 18px 22px 22px'}}>
+                                        <span className="mono" style={{
+                                            fontSize: i===activeIdx ? 17 : 14,
+                                            fontWeight: i===activeIdx ? 600 : 400,
+                                            letterSpacing:'0.06em',
+                                            color: i===activeIdx ? 'var(--ink)' : 'var(--ink-3)',
+                                            transition:'all 0.2s'
+                                        }}>
+                                            {String(s.step).padStart(2,'0')}
+                                        </span>
+                                        {i===status.current_step_idx && (
+                                            <span style={{width:6, height:6, borderRadius:'50%',
+                                                          background:'var(--accent)', flexShrink:0,
+                                                          boxShadow:'0 0 0 3px rgba(0,113,227,0.18)'}}/>
+                                        )}
                                     </div>
                                 )) : (
                                     [1,2,3,4,5,6].map(i => (
@@ -1111,7 +1285,7 @@ function PCView() {
                             <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center'}}>
                                 {streamAlive ? (
                                     <img key="stream-live" src="/stream" alt="Live stream"
-                                         style={{width:'100%', height:'100%', objectFit:'contain'}}
+                                         style={{width:'100%', height:'100%', objectFit:'cover'}}
                                          onLoad={() => setStreamAlive(true)}
                                          onError={() => setStreamAlive(false)}/>
                                 ) : (
@@ -1147,8 +1321,8 @@ function PCView() {
                                     <PingIndicator rtt={rtt} fps={status.current_fps} streamLevel={status.stream_level}/>
                                 </div>
                             </div>
-                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'18px 22px',
-                                         display:'flex', alignItems:'flex-start', gap:18}}>
+                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'22px 24px',
+                                         display:'flex', alignItems:'flex-start', gap:18, minHeight:140}}>
                                 <div style={{flex:1, minWidth:0}}>
                                     <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
                                         <span className={`stat-dot ${
@@ -1177,7 +1351,7 @@ function PCView() {
                                             <button onClick={() => setShowFail(false)} style={{background:'transparent', border:'none', color:'var(--ink-3)', cursor:'pointer'}}>✕</button>
                                         </div>
                                     )}
-                                    <p style={{margin:0, fontSize:17, lineHeight:1.5, fontWeight:400, color:'var(--ink)', wordBreak:'keep-all'}}>
+                                    <p style={{margin:0, fontSize:22, lineHeight:1.5, fontWeight:400, color:'var(--ink)', wordBreak:'keep-all'}}>
                                         {status.has_frame ? status.ai_response : '모바일 기기를 연결하여 실시간 코칭을 받으세요.'}
                                     </p>
                                 </div>
@@ -1194,8 +1368,44 @@ function PCView() {
                         </div>
                     </main>
 
-                    {/* RIGHT */}
-                    <aside style={{width:340, display:'flex', flexDirection:'column', gap:12, minWidth:0}}>
+                    {/* 드래그 핸들 */}
+                    <div
+                        ref={rightDragRef}
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const startX = e.clientX;
+                            const startW = rightWidth;
+                            const onMove = (ev) => {
+                                const delta = startX - ev.clientX;
+                                const newW  = Math.min(700, Math.max(240, startW + delta));
+                                setRightWidth(newW);
+                            };
+                            const onUp = () => {
+                                window.removeEventListener('mousemove', onMove);
+                                window.removeEventListener('mouseup', onUp);
+                            };
+                            window.addEventListener('mousemove', onMove);
+                            window.addEventListener('mouseup', onUp);
+                        }}
+                        style={{
+                            width:6, flexShrink:0, cursor:'col-resize',
+                            background:'transparent', position:'relative',
+                            display:'flex', alignItems:'center', justifyContent:'center',
+                            transition:'background 0.15s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background='var(--line)'}
+                        onMouseLeave={e => e.currentTarget.style.background='transparent'}
+                    >
+                        <div style={{width:2, height:40, borderRadius:999, background:'var(--line-2)'}}/>
+                    </div>
+
+                    {/* RIGHT — 드래그 조절 가능한 매뉴얼 패널 */}
+                    <aside style={{
+                        width: rightWidth, minWidth: rightWidth,
+                        display:'flex', flexDirection:'column', gap:12,
+                        position:'relative', flexShrink:0, overflow:'hidden',
+                        transition:'none',
+                    }}>
                         <div className="surface" style={{flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0}}>
                             {currentStep ? (
                                 <div key={flashKey} className="step-in" style={{display:'flex', flexDirection:'column', height:'100%', minHeight:0}}>
@@ -1211,15 +1421,15 @@ function PCView() {
                                             {activeIdx+1}/{totalSteps}
                                         </span>
                                     </div>
-                                    <div style={{padding:18}}>
+                                    <div style={{flex:'0 0 65%', padding:'0 18px 12px', display:'flex', flexDirection:'column', minHeight:0}}>
                                         <div className="img-well" onClick={() => setModalImg({src:currentStep.image_url, title:`STEP ${currentStep.step}`})}>
                                             {currentStep.image_url ?
                                                 <img src={currentStep.image_url} alt="step"/> :
                                                 <div className="img-well-placeholder">step · figure</div>}
                                         </div>
                                     </div>
-                                    <div className="scroll" style={{flex:1, overflowY:'auto', padding:'4px 22px 22px', minHeight:0}}>
-                                        <p style={{margin:0, fontSize:14.5, lineHeight:1.65, color:'var(--ink-2)', wordBreak:'keep-all'}}>
+                                    <div className="scroll" style={{flex:1, overflowY:'auto', padding:'4px 22px 22px', minHeight:60}}>
+                                        <p style={{margin:0, fontSize:18, lineHeight:1.7, color:'var(--ink-2)', wordBreak:'keep-all'}}>
                                             {currentStep.desc.replace(/([가-힣a-zA-Z0-9,\.])\n([가-힣a-zA-Z])/g,'$1 $2').replace(/\n/g,' ').trim()}
                                         </p>
                                     </div>

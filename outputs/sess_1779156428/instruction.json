@@ -1,0 +1,86 @@
+[
+    {
+        "step": 1,
+        "title": "정사각형 준비",
+        "desc": "정사각형 종이를 대각선 방향으로 접는 선을 표시합니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_1_1779156444888.jpg"
+    },
+    {
+        "step": 2,
+        "title": "삼각형 접기",
+        "desc": "종이를 대각선으로 반을 접어 삼각형을 만듭니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_2_1779156444894.jpg"
+    },
+    {
+        "step": 3,
+        "title": "작은 삼각형 접기",
+        "desc": "삼각형을 다시 반으로 접어 더 작은 삼각형을 만듭니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_3_1779156444895.jpg"
+    },
+    {
+        "step": 4,
+        "title": "주머니 벌려 접기",
+        "desc": "한쪽 삼각형 면의 틈을 벌려 눌러서 사각형 모양이 되도록 접습니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_4_1779156444895.jpg"
+    },
+    {
+        "step": 5,
+        "title": "뒷면 주머니 접기",
+        "desc": "반대쪽 면도 4번 과정과 동일하게 벌려 눌러 접어 사각형을 만듭니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_5_1779156444895.jpg"
+    },
+    {
+        "step": 6,
+        "title": "가장자리 접기",
+        "desc": "벌어진 부분의 양쪽 가장자리를 중심선에 맞춰 접습니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_6_1779156444895.jpg"
+    },
+    {
+        "step": 7,
+        "title": "반대쪽 동일 반복",
+        "desc": "Fold the other side and do the same as shown in step 6",
+        "image_url": "/outputs/sess_1779156428/img_step_7_1779156444895.jpg"
+    },
+    {
+        "step": 8,
+        "title": "폭 좁혀 접기",
+        "desc": "양쪽 날개가 될 부분의 가장자리를 다시 중심선에 맞춰 가늘게 접습니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_8_1779156444896.jpg"
+    },
+    {
+        "step": 9,
+        "title": "반대쪽 가늘게 접기",
+        "desc": "Fold the other side the same as shown in 8",
+        "image_url": "/outputs/sess_1779156428/img_step_9_1779156444896.jpg"
+    },
+    {
+        "step": 10,
+        "title": "다리 들어올리기",
+        "desc": "아래쪽으로 갈라진 두 부분을 위로 꺾어 올립니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_10_1779156444897.jpg"
+    },
+    {
+        "step": 11,
+        "title": "머리와 꼬리 위치 잡기",
+        "desc": "꺾어 올린 부분을 밖으로 빼내어 머리와 꼬리의 위치를 잡습니다.",
+        "image_url": "/outputs/sess_1779156428/img_step_11_1779156444897.jpg"
+    },
+    {
+        "step": 12,
+        "title": "머리 접기",
+        "desc": "Make face by folding toward inside.",
+        "image_url": "/outputs/sess_1779156428/img_step_12_1779156444898.jpg"
+    },
+    {
+        "step": 13,
+        "title": "몸통 부풀리기",
+        "desc": "Stretch the wings, and blow up the body through a hole underneath.",
+        "image_url": "/outputs/sess_1779156428/img_step_13_1779156444898.jpg"
+    },
+    {
+        "step": 14,
+        "title": "학 완성",
+        "desc": "Finished",
+        "image_url": "/outputs/sess_1779156428/img_step_14_1779156444899.jpg"
+    }
+]

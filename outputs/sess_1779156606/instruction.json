@@ -1,0 +1,104 @@
+[
+    {
+        "step": 1,
+        "title": "Step 1",
+        "desc": "정사각형 종이를 대각선으로 반으로 접습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_1_1779156620092.jpg"
+    },
+    {
+        "step": 2,
+        "title": "Step 2",
+        "desc": "삼각형을 다시 반으로 접었다가 펼쳐서 중심선을 만듭니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_2_1779156620122.jpg"
+    },
+    {
+        "step": 3,
+        "title": "Step 3",
+        "desc": "오른쪽 모서리를 위쪽 꼭짓점에 맞춰 위로 접어 올립니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_3_1779156620123.jpg"
+    },
+    {
+        "step": 4,
+        "title": "Step 4",
+        "desc": "왼쪽 모서리도 위쪽 꼭짓점에 맞춰 위로 접어 올립니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_4_1779156620123.jpg"
+    },
+    {
+        "step": 5,
+        "title": "Step 5",
+        "desc": "접어 올렸던 플랩의 윗부분을 바깥쪽으로 벌려 접습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_5_1779156620124.jpg"
+    },
+    {
+        "step": 6,
+        "title": "Step 6",
+        "desc": "반대쪽 플랩도 동일하게 바깥쪽으로 벌려 접습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_6_1779156620124.jpg"
+    },
+    {
+        "step": 7,
+        "title": "Step 7",
+        "desc": "위쪽의 뾰족한 부분을 안쪽으로 접어 넣습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_7_1779156620125.jpg"
+    },
+    {
+        "step": 8,
+        "title": "Step 8",
+        "desc": "아래쪽 모서리를 위로 접어 올립니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_8_1779156620125.jpg"
+    },
+    {
+        "step": 9,
+        "title": "Step 9",
+        "desc": "양쪽 가장자리를 중심선에 맞춰 안쪽으로 접습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_9_1779156620126.jpg"
+    },
+    {
+        "step": 10,
+        "title": "Step 10",
+        "desc": "접었던 플랩을 다시 바깥쪽으로 대각선 방향으로 접습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_10_1779156620126.jpg"
+    },
+    {
+        "step": 11,
+        "title": "Step 11",
+        "desc": "전체적인 모양을 가다듬으며 위쪽 부분을 아래로 접습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_11_1779156620127.jpg"
+    },
+    {
+        "step": 12,
+        "title": "Step 12",
+        "desc": "양쪽 날개 부분을 옆으로 벌려 당깁니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_12_1779156620128.jpg"
+    },
+    {
+        "step": 13,
+        "title": "Step 13",
+        "desc": "다리가 될 부분을 아래 방향으로 접어 내립니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_13_1779156620128.jpg"
+    },
+    {
+        "step": 14,
+        "title": "Step 14",
+        "desc": "머리 부분과 다리 마디를 세밀하게 접어 형태를 만듭니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_14_1779156620129.jpg"
+    },
+    {
+        "step": 15,
+        "title": "Step 15",
+        "desc": "앞다리와 뒷다리를 바깥쪽으로 벌려 접습니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_15_1779156620129.jpg"
+    },
+    {
+        "step": 16,
+        "title": "Step 16",
+        "desc": "다리를 구부려 개구리가 앉아 있는 입체적인 모양을 만듭니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_16_1779156620130.jpg"
+    },
+    {
+        "step": 17,
+        "title": "Step 17",
+        "desc": "눈을 붙여 개구리를 완성합니다.",
+        "image_url": "/outputs/sess_1779156606/img_step_17_1779156620130.jpg"
+    }
+]
