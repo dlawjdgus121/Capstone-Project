@@ -36,6 +36,7 @@ def _find_cloudflared():
     """프로젝트 루트 또는 PATH에서 cloudflared 바이너리 찾기"""
     candidates = [
         os.path.join(BASE_DIR, "cloudflared-linux-amd64"),
+        os.path.join(BASE_DIR, "cloudflared.exe"),
         os.path.join(BASE_DIR, "cloudflared"),
         "/usr/local/bin/cloudflared",
         "cloudflared",
@@ -145,6 +146,7 @@ frame_count     = 0
 LIVEKIT_URL   = os.getenv("LIVEKIT_URL",   "wss://capstoneproject-l2ih740k.livekit.cloud")
 LIVEKIT_TOKEN = os.getenv("LIVEKIT_TOKEN")   # 서버(Python SDK)용 토큰
 MOBILE_TOKEN  = os.getenv("MOBILE_TOKEN")    # 모바일 브라우저용 토큰
+PC_TOKEN      = os.getenv("PC_TOKEN")          # PC 브라우저용 토큰
 MOBILE_URL    = os.getenv("MOBILE_URL", "")  # Cloudflare 등 외부 접속 URL (QR용)
 
 # ── 세션 저장/복원 ─────────────────────────────────────────────────────────
@@ -572,6 +574,7 @@ async def get_config():
         content={
             "livekit_url":  LIVEKIT_URL,
             "mobile_token": MOBILE_TOKEN or "",
+            "pc_token":     PC_TOKEN or "",
             "mobile_url":   os.getenv("MOBILE_URL", ""),  # 항상 최신값 반환
         },
         headers={"Cache-Control": "no-store"}

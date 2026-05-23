@@ -244,6 +244,21 @@
         }
         .sidebar-toggle:hover { background: var(--bg); color: var(--ink); }
 
+        /* 스텝 툴팁 — CSS로는 fixed 불가, JS로 처리 */
+        .step-tooltip-box {
+            position: fixed;
+            background: var(--ink); color: var(--bg-2);
+            padding: 8px 12px; border-radius: 8px;
+            font-size: 12px; font-weight: 500; line-height: 1.5;
+            max-width: 240px; pointer-events: none; z-index: 9999;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            transition: opacity 0.15s ease;
+        }
+        .step-tooltip-box::before {
+            content: ''; position: absolute; right: 100%; top: 14px;
+            border: 5px solid transparent; border-right-color: var(--ink);
+        }
+
         /* 전체 화면 플래시 — PASS/FAIL 피드백 */
         @keyframes flash-pass {
             0%   { opacity:0; }
@@ -318,8 +333,8 @@
             font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-3);
         }
 
-        @keyframes step-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
-        .step-in { animation: step-in 0.22s ease-out; }
+        @keyframes step-in { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+        .step-in { animation: step-in 0.35s cubic-bezier(0.4,0,0.2,1); }
 
         .landing-tag {
             position: absolute; top: 24px; left: 28px;
@@ -411,14 +426,22 @@ function MobileView() {
                 await room.connect(livekitUrl, mobileToken);
 
                 const tracks = await LK.createLocalTracks({
-                    video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:720}, frameRate:30 }
+                    video: {
+                        facingMode: 'environment',
+                        width:  { ideal: 1280, min: 1280 },
+                        height: { ideal: 720,  min: 720  },
+                        frameRate: { ideal: 30, min: 24 },
+                    }
                 });
                 const videoTrack = tracks.find(t => t.kind === 'video');
                 if (videoRef.current && videoTrack) videoTrack.attach(videoRef.current);
                 await room.localParticipant.publishTrack(videoTrack, {
-                    simulcast: false,
-                    videoEncoding: { maxBitrate: 3_000_000 },
-                    priority: 'high'
+                    simulcast: false,          // 단일 품질 고정
+                    dynacast:  false,          // 자동 품질 조절 비활성화
+                    videoEncoding: {
+                        maxBitrate:    4_000_000,  // 최대 4Mbps
+                        maxFramerate:  30,
+                    },
                 });
                 setConnected(true);
 
@@ -596,7 +619,7 @@ function HelpModal({ onClose }) {
     );
 }
 
-function CompletionOverlay({ totalSteps, onRestart }) {
+function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart }) {
     return (
         <div className="modal-back">
             <div style={{textAlign:'center', maxWidth:480, padding:32, animation:'step-in 0.4s ease-out'}}>
@@ -604,9 +627,18 @@ function CompletionOverlay({ totalSteps, onRestart }) {
                 <h2 style={{fontSize:64, fontWeight:300, lineHeight:1.05, letterSpacing:'-0.03em', margin:'0 0 8px'}}>
                     조립 완료.
                 </h2>
-                <p style={{color:'var(--ink-3)', fontSize:15, margin:'0 0 36px'}}>
+                <p style={{color:'var(--ink-3)', fontSize:15, margin:'0 0 12px'}}>
                     총 <span style={{color:'var(--ink)', fontWeight:600}}>{totalSteps}단계</span>를 모두 완료했습니다.
                 </p>
+                {elapsedSeconds > 0 && (
+                    <p style={{color:'var(--ink-4)', fontSize:13, margin:'0 0 36px',
+                               fontFamily:'var(--font-mono)', letterSpacing:'0.05em'}}>
+                        소요 시간&nbsp;
+                        {Math.floor(elapsedSeconds/60) > 0 ? `${Math.floor(elapsedSeconds/60)}분 ` : ''}
+                        {elapsedSeconds%60}초
+                    </p>
+                )}
+                {!(elapsedSeconds > 0) && <div style={{marginBottom:36}}/>}
                 <div style={{display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap'}}>
                     <button className="btn-quiet" onClick={onRestart}>← 처음으로</button>
                     <button className="btn-spline" onClick={async () => {
@@ -762,10 +794,15 @@ function PCView() {
         ai_result:'WAIT', current_fps:0, stream_level:2,
     });
     const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState('');  // 업로드 에러 메시지
     const [userSelectedIdx, setUserSelectedIdx] = useState(null);
     const [flashKey, setFlashKey] = useState(0);
     const [modalImg, setModalImg] = useState(null);
     const [showComplete, setShowComplete] = useState(false);
+    const [completeTime, setCompleteTime]   = useState(null);  // 완료 소요 시간(초)
+    const coachStartTime                        = useRef(null);    // 카메라 첫 연결 시각
+    const [liveElapsed, setLiveElapsed]         = useState(0);     // 조립 중 실시간 경과 시간(초)
+    const liveElapsedRef                            = useRef(0);       // 클로저 안에서 최신값 참조용
     const [isDragging, setIsDragging] = useState(false);
     const [ttsOn, setTtsOn] = useState(true);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -778,6 +815,8 @@ function PCView() {
     const [sidebarOpen, setSidebarOpen] = useState(true);  // 왼쪽 사이드바 열림/닫힘
     const [rightWidth, setRightWidth]       = useState(340);   // 오른쪽 패널 너비 (드래그 조절)
     const rightDragRef                          = useRef(null);
+    const pcVideoRef                            = useRef(null);
+    const pcRoomRef                             = useRef(null);
     const [qrCodeUrl, setQrCodeUrl] = useState('');
     const [streamAlive, setStreamAlive] = useState(false);
     const [previewSteps, setPreviewSteps] = useState([]);  // 파싱 프리뷰
@@ -789,6 +828,8 @@ function PCView() {
     const pingIntervalRef = useRef(null);
     const inputRef = useRef(null);
     const listRef = useRef(null);
+    const [hoveredStep, setHoveredStep] = useState(null);  // {idx, x, y, desc, step}
+    const [passedSteps, setPassedSteps]     = useState(new Set());  // PASS된 step idx
     const stepRefs = useRef([]);
     const prevAiResponse = useRef('');
     const prevActiveIdx = useRef(0);
@@ -840,6 +881,81 @@ function PCView() {
             }
         });
     }, [view]);  // view 바뀔 때마다 재실행
+
+    /* PC 브라우저 → LiveKit 직접 수신 */
+    useEffect(() => {
+        if (view !== 'coach' || isDemo) return;
+        const LK = window.LivekitClient;
+        if (!LK) return;
+        let cancelled = false;
+        const room = new LK.Room({ adaptiveStream: true, dynacast: true });
+        pcRoomRef.current = room;
+
+        const attachVideo = (track) => {
+            if (!track || track.kind !== 'video' || !pcVideoRef.current) return;
+            track.attach(pcVideoRef.current);
+            setStreamAlive(true);
+        };
+
+        room.on('trackSubscribed', attachVideo);
+        room.on('trackUnsubscribed', () => setStreamAlive(false));
+        room.on('disconnected', () => setStreamAlive(false));
+
+        fetch('/config', { cache:'no-store' }).then(r => r.json()).then(cfg => {
+            if (!cfg.pc_token) { console.warn('PC_TOKEN 없음 — LiveKit 미사용'); return; }
+            room.connect(cfg.livekit_url, cfg.pc_token, { autoSubscribe: true }).then(() => {
+                if (cancelled) return;
+                room.remoteParticipants.forEach(p =>
+                    p.trackPublications.forEach(pub => {
+                        if (pub.track?.kind === 'video') attachVideo(pub.track);
+                    })
+                );
+            }).catch(e => console.error('PC LiveKit 오류:', e));
+        });
+
+        return () => {
+            cancelled = true;
+            setStreamAlive(false);
+            try { room.disconnect(); } catch(e) {}
+            pcRoomRef.current = null;
+        };
+    }, [view, isDemo]);
+
+
+    /* 조립 시간 측정 — 카메라 첫 연결 시 시작 */
+    useEffect(() => {
+        if (view !== 'coach') {
+            coachStartTime.current = null;  // 홈 돌아가면 초기화
+            setLiveElapsed(0);
+            liveElapsedRef.current = 0;
+        }
+    }, [view]);
+
+    useEffect(() => {
+        if (view !== 'coach') return;
+        // 카메라 연결될 때마다 시작 시각 재설정 (첫 연결 시)
+        if (status.has_frame && !coachStartTime.current) {
+            coachStartTime.current = Date.now();
+            setLiveElapsed(0);
+            liveElapsedRef.current = 0;
+        }
+        // 카메라 끊기면 카운터 일시 정지 (시작 시각 유지)
+        if (!status.has_frame) {
+            setLiveElapsed(liveElapsedRef.current);  // 마지막 값 유지
+        }
+    }, [status.has_frame, view]);
+
+    useEffect(() => {
+        if (view !== 'coach' || !status.has_frame) return;  // 카메라 연결 시에만 카운트
+        const t = setInterval(() => {
+            if (coachStartTime.current) {
+                const elapsed = Math.floor((Date.now() - coachStartTime.current) / 1000);
+                liveElapsedRef.current = elapsed;
+                setLiveElapsed(elapsed);
+            }
+        }, 1000);
+        return () => clearInterval(t);
+    }, [view, status.has_frame]);
 
     /* 카메라 연결 끊김 감지 → streamAlive 갱신 + QR 재생성 */
     const prevHasFrame = useRef(false);
@@ -909,6 +1025,7 @@ function PCView() {
         // UI 먼저 전환 (reset은 백그라운드)
         setIsNewStart(false);
         setStatus(prev => ({...prev, analysis_time:0, elapsed_time:0, progress_step:'upload', is_analyzed:false, manual_steps:[]}));
+        setUploadError('');
         setPreviewSteps([]);
         setUploading(true);
         setView('upload');
@@ -917,9 +1034,22 @@ function PCView() {
         for (let f of files) fd.append('files', f);
         try {
             const res = await fetch('/process-manual', { method:'POST', body:fd });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `서버 오류 (${res.status})`);
+            }
             const data = await res.json();
-            if (data.status === 'success') setUploading(false);
-        } catch(e) { setUploading(false); setView('landing'); }
+            if (data.status === 'success') {
+                setUploadError('');
+                setUploading(false);
+            } else {
+                throw new Error(data.message || '분석 실패');
+            }
+        } catch(e) {
+            setUploading(false);
+            setUploadError(e.message || '알 수 없는 오류가 발생했습니다.');
+            setView('upload');  // 에러 시 upload 화면 유지
+        }
     }, []);
 
     const onUpload = e => uploadFiles(e.target.files);
@@ -956,7 +1086,10 @@ function PCView() {
 
     const goToNext = useCallback(() => {
         const cur = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
-        if (cur >= totalSteps-1) setShowComplete(true);
+        if (cur >= totalSteps-1) {
+                setCompleteTime(liveElapsedRef.current > 0 ? liveElapsedRef.current : liveElapsed > 0 ? liveElapsed : 1);
+                setShowComplete(true);
+            }
         else forceSetStep(cur+1);
     }, [userSelectedIdx, status.current_step_idx, totalSteps, forceSetStep]);
 
@@ -1076,7 +1209,21 @@ function PCView() {
             {/* 전체 화면 플래시 — PASS/FAIL 시각적 피드백 */}
             {flashType && <div className={`flash-overlay ${flashType}`}/>}
 
-            {showComplete && <CompletionOverlay totalSteps={totalSteps} onRestart={() => { setShowComplete(false); forceSetStep(0); }}/> }
+            {/* 스텝 툴팁 — fixed 위치로 overflow 영향 없음 */}
+            {hoveredStep && (
+                <div className="step-tooltip-box" style={{
+                    left: hoveredStep.x, top: hoveredStep.y - 30,
+                    opacity: 1,
+                }}>
+                    <div style={{fontFamily:'var(--font-mono)', fontSize:10,
+                                 letterSpacing:'0.1em', opacity:0.6, marginBottom:4}}>
+                        STEP {String(hoveredStep.step).padStart(2,'0')}
+                    </div>
+                    {hoveredStep.desc ? hoveredStep.desc.slice(0,80) + (hoveredStep.desc.length > 80 ? '…' : '') : '—'}
+                </div>
+            )}
+
+            {showComplete && <CompletionOverlay totalSteps={totalSteps} elapsedSeconds={completeTime} onRestart={() => { setShowComplete(false); forceSetStep(0); }}/> }
             {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
             {modalImg && <ImageModal src={modalImg.src} title={modalImg.title} onClose={() => setModalImg(null)}/>}
             {passToast && (
@@ -1104,10 +1251,18 @@ function PCView() {
                         <button className="btn-spline" style={{minWidth:240}} onClick={() => { setIsNewStart(true); setView('upload'); }}>
                             Get Started
                         </button>
-                        <button className="btn-spline ghost" style={{minWidth:240}}
-                                onClick={() => { setIsNewStart(false); setView(status.is_analyzed && status.manual_steps?.length>0 ? 'coach' : 'upload'); }}>
-                            Continue →
-                        </button>
+                        <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:4}}>
+                            <button className="btn-spline ghost" style={{minWidth:240}}
+                                    onClick={() => { setIsNewStart(false); setView(status.is_analyzed && status.manual_steps?.length>0 ? 'coach' : 'upload'); }}>
+                                Continue →
+                            </button>
+                            {status.is_analyzed && status.manual_steps?.length>0 && (
+                                <span style={{fontSize:11, color:'rgba(255,255,255,0.75)',
+                                              fontFamily:'var(--font-mono)', letterSpacing:'0.1em'}}>
+                                    STEP {status.current_step_idx+1} / {status.manual_steps.length} 이어서 진행
+                                </span>
+                            )}
+                        </div>
                     </div>
                     {status.is_analyzed && status.manual_steps?.length>0 && (
                         <div className="session-pill">
@@ -1123,6 +1278,22 @@ function PCView() {
                 <div style={{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:24, position:'relative'}}>
                     <button className="btn-quiet" onClick={goHome} style={{position:'absolute', top:24, left:24}}>← 뒤로가기</button>
                     <div className="landing-tag" style={{top:24, right:24, left:'auto'}}>step · 01</div>
+                    {uploadError && !uploading && (
+                            <div style={{
+                                width:'100%', maxWidth:560, marginBottom:16,
+                                padding:'14px 18px', borderRadius:12,
+                                background:'#fdf2f1', border:'1px solid rgba(179,38,30,0.2)',
+                                display:'flex', alignItems:'flex-start', gap:12,
+                            }}>
+                                <span style={{color:'var(--bad)', fontSize:16, flexShrink:0}}>⚠️</span>
+                                <div style={{flex:1}}>
+                                    <p style={{margin:'0 0 4px', fontSize:13, fontWeight:600, color:'var(--bad)'}}>매뉴얼 분석 실패</p>
+                                    <p style={{margin:0, fontSize:12, color:'var(--ink-2)', lineHeight:1.5}}>{uploadError}</p>
+                                </div>
+                                <button onClick={() => setUploadError('')}
+                                        style={{background:'transparent', border:'none', cursor:'pointer', color:'var(--ink-4)', fontSize:14}}>✕</button>
+                            </div>
+                        )}
                     {uploading
                         ? <UploadProgress status={status} onCancel={goHome}/>
                         /* previewSteps가 쌓이면 파일 선택 화면에도 표시 */
@@ -1211,21 +1382,31 @@ function PCView() {
                                     <div key={i} ref={el => stepRefs.current[i]=el} className="step-row"
                                          data-active={i===activeIdx} data-aifocus={i===status.current_step_idx}
                                          onClick={() => forceSetStep(i)}
-                                         style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'22px 18px 22px 22px'}}>
+                                         style={{display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                 padding:'22px 18px 22px 22px', position:'relative'}}
+                                         onMouseEnter={e => {
+                                             const r = e.currentTarget.getBoundingClientRect();
+                                             setHoveredStep({idx:i, x:r.right+12, y:r.top + r.height/2, desc:s.desc, step:s.step});
+                                         }}
+                                         onMouseLeave={() => setHoveredStep(null)}>
                                         <span className="mono" style={{
                                             fontSize: i===activeIdx ? 17 : 14,
                                             fontWeight: i===activeIdx ? 600 : 400,
                                             letterSpacing:'0.06em',
-                                            color: i===activeIdx ? 'var(--ink)' : 'var(--ink-3)',
+                                            color: passedSteps.has(i) ? 'var(--good)' :
+                                                   i===activeIdx ? 'var(--ink)' : 'var(--ink-3)',
                                             transition:'all 0.2s'
                                         }}>
                                             {String(s.step).padStart(2,'0')}
                                         </span>
-                                        {i===status.current_step_idx && (
+                                        {passedSteps.has(i) ? (
+                                            <span style={{fontSize:12, color:'var(--good)', fontWeight:600, flexShrink:0}}>✓</span>
+                                        ) : i===status.current_step_idx ? (
                                             <span style={{width:6, height:6, borderRadius:'50%',
                                                           background:'var(--accent)', flexShrink:0,
                                                           boxShadow:'0 0 0 3px rgba(0,113,227,0.18)'}}/>
-                                        )}
+                                        ) : null}
+
                                     </div>
                                 )) : (
                                     [1,2,3,4,5,6].map(i => (
@@ -1283,12 +1464,10 @@ function PCView() {
                     <main style={{flex:1, display:'flex', flexDirection:'column', minWidth:0}}>
                         <div className="stream-frame" style={{flex:1, display:'flex', flexDirection:'column'}}>
                             <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center'}}>
-                                {streamAlive ? (
-                                    <img key="stream-live" src="/stream" alt="Live stream"
-                                         style={{width:'100%', height:'100%', objectFit:'cover'}}
-                                         onLoad={() => setStreamAlive(true)}
-                                         onError={() => setStreamAlive(false)}/>
-                                ) : (
+                                <video ref={pcVideoRef} autoPlay playsInline muted
+                                       style={{width:'100%', height:'100%', objectFit:'cover',
+                                               display: streamAlive ? 'block' : 'none'}}/>
+                                {!streamAlive && (
                                     /* ── QR 코드 표시 (미연결 시) ── */
                                     <div style={{textAlign:'center', color:'#666', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%'}}>
                                         {qrCodeUrl ? (
@@ -1320,6 +1499,16 @@ function PCView() {
                                 <div style={{position:'absolute', top:14, left:14}}>
                                     <PingIndicator rtt={rtt} fps={status.current_fps} streamLevel={status.stream_level}/>
                                 </div>
+                                {liveElapsed > 0 && (
+                                    <div style={{position:'absolute', top:14, right:14, zIndex:20}}>
+                                        <div className="ping-pill">
+                                            <span>⏱</span>
+                                            <span className="mono">
+                                                {Math.floor(liveElapsed/60) > 0 ? `${Math.floor(liveElapsed/60)}m ` : ''}{String(liveElapsed%60).padStart(2,'0')}s
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                             <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'22px 24px',
                                          display:'flex', alignItems:'flex-start', gap:18, minHeight:140}}>
@@ -1351,7 +1540,12 @@ function PCView() {
                                             <button onClick={() => setShowFail(false)} style={{background:'transparent', border:'none', color:'var(--ink-3)', cursor:'pointer'}}>✕</button>
                                         </div>
                                     )}
-                                    <p style={{margin:0, fontSize:22, lineHeight:1.5, fontWeight:400, color:'var(--ink)', wordBreak:'keep-all'}}>
+                                    <p style={{
+                                        margin:0, fontSize:22, lineHeight:1.5, fontWeight:400, wordBreak:'keep-all',
+                                        color: status.ai_result==='PASS' ? 'var(--good)' :
+                                               status.ai_result==='FAIL' ? 'var(--bad)'  : 'var(--ink)',
+                                        transition:'color 0.3s ease',
+                                    }}>
                                         {status.has_frame ? status.ai_response : '모바일 기기를 연결하여 실시간 코칭을 받으세요.'}
                                     </p>
                                 </div>
