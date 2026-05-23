@@ -888,7 +888,7 @@ function PCView() {
         const LK = window.LivekitClient;
         if (!LK) return;
         let cancelled = false;
-        const room = new LK.Room({ adaptiveStream: true, dynacast: true });
+        const room = new LK.Room({ adaptiveStream: false, dynacast: false });
         pcRoomRef.current = room;
 
         const attachVideo = (track) => {
