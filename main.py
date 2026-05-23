@@ -1,4 +1,4 @@
-import io
+﻿import io
 import os
 import json
 import time
@@ -35,7 +35,7 @@ import threading, re as _re
 def _find_cloudflared():
     """프로젝트 루트 또는 PATH에서 cloudflared 바이너리 찾기"""
     candidates = [
-        os.path.join(BASE_DIR, "cloudflared-linux-amd64"),
+        os.path.join(BASE_DIR, "cloudflared.exe"),
         os.path.join(BASE_DIR, "cloudflared"),
         "/usr/local/bin/cloudflared",
         "cloudflared",
@@ -106,8 +106,13 @@ FPS_THRESHOLDS = {
 }
 ADAPTIVE_WINDOW = 5  # 최근 몇 개의 FPS 샘플로 판단할지
 
-# ── 최신 프레임 버퍼 (블로킹 없이 항상 최신 프레임만 유지) ────────────────
+# ── 최신 프레임 버퍼 ────────────────────────────────────────────────────────
 latest_raw_frame = None   # VideoFrame 객체
+
+# ── 매뉴얼 파싱 프리뷰 — 추출된 STEP을 실시간으로 프론트에 전달
+import asyncio as _asyncio
+_preview_steps: list = []       # 추출된 STEP 누적 리스트
+_preview_updated: bool = False  # 새 STEP 추가됐을 때 SSE 트리거용
 
 # ── 시스템 상태 ────────────────────────────────────────────────────────────
 state = {
@@ -120,6 +125,8 @@ state = {
     "analysis_time":  0.0,
     "step_locked":    False,
     "progress_step":  "upload",
+    "file_info":      {"name": "", "pages": 0, "steps": 0},  # 업로드된 파일 정보
+    "uploaded_preview": "",  # 업로드된 원본 파일 미리보기 URL
     "current_fps":    0.0,
     "last_rtt":       0.0,    # ms 단위 RTT
     "is_processing":  False,
@@ -135,10 +142,11 @@ frame_count     = 0
 
 # LiveKit 설정
 # LiveKit 설정
-LIVEKIT_URL   = os.getenv("LIVEKIT_URL",   "wss://capstone-project-jvy5e1z6.livekit.cloud")
-LIVEKIT_TOKEN = os.getenv("LIVEKIT_TOKEN")   # 서버(Python SDK)용 토큰
-MOBILE_TOKEN  = os.getenv("MOBILE_TOKEN")    # 모바일 브라우저용 토큰
-MOBILE_URL    = os.getenv("MOBILE_URL", "")  # Cloudflare 등 외부 접속 URL (QR용)
+LIVEKIT_URL   = os.getenv("LIVEKIT_URL", "wss://capstoneproject-l2ih740k.livekit.cloud")
+LIVEKIT_TOKEN = os.getenv("LIVEKIT_TOKEN")   # Python 서버용
+MOBILE_TOKEN  = os.getenv("MOBILE_TOKEN")    # 모바일 브라우저용
+PC_TOKEN      = os.getenv("PC_TOKEN")        # PC 브라우저용 추가
+MOBILE_URL    = os.getenv("MOBILE_URL", "")
 
 # ── 세션 저장/복원 ─────────────────────────────────────────────────────────
 def save_session():
@@ -468,10 +476,10 @@ async def lifespan(app: FastAPI):
     elif not CLOUDFLARED_BIN:
         print("ℹ️ [Cloudflare] cloudflared 바이너리 없음 — 터널 미사용")
 
-    coaching_task = asyncio.create_task(coaching_loop())
+    # coaching_task = asyncio.create_task(coaching_loop())  # 자동 추론 비활성화 — VLM 버튼 수동 전용
     livekit_task  = asyncio.create_task(run_livekit())
     yield
-    coaching_task.cancel()
+    # coaching_task.cancel()
     livekit_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
@@ -517,15 +525,55 @@ async def ping_check(body: dict):
     """클라이언트 RTT 측정용"""
     return {"pong": True, "client_time": body.get("client_time", 0)}
 
+@app.get("/preview-steps")
+async def preview_steps():
+    """매뉴얼 파싱 중 추출된 STEP을 실시간으로 반환 (SSE)"""
+    async def event_stream():
+        last_count = 0
+        idle_ticks = 0   # 분석 완료 후 대기 카운터
+
+        # 분석 시작 대기 (최대 30초)
+        for _ in range(60):
+            if state["progress_step"] in ("render", "analyze"):
+                break
+            await asyncio.sleep(0.5)
+
+        while True:
+            await asyncio.sleep(0.4)
+
+            if len(_preview_steps) > last_count:
+                new_steps = _preview_steps[last_count:]
+                last_count = len(_preview_steps)
+                data = json.dumps(new_steps, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+                idle_ticks = 0
+            else:
+                idle_ticks += 1
+
+            # 분석 완료 + 2초 이상 새 STEP 없으면 종료
+            if state["progress_step"] == "done" and idle_ticks >= 5:
+                yield f"data: __done__\n\n"
+                break
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+@app.post("/reset-preview")
+async def reset_preview():
+    global _preview_steps, _preview_updated
+    _preview_steps = []
+    _preview_updated = False
+    return {"status": "ok"}
+
 @app.get("/config")
 async def get_config():
-    """프론트엔드에 LiveKit 접속 정보 전달 — 토큰을 env에서 읽어 반환"""
     from fastapi.responses import JSONResponse
     return JSONResponse(
         content={
             "livekit_url":  LIVEKIT_URL,
             "mobile_token": MOBILE_TOKEN or "",
-            "mobile_url":   os.getenv("MOBILE_URL", ""),  # 항상 최신값 반환
+            "pc_token":     PC_TOKEN or "",
+            "mobile_url":   os.getenv("MOBILE_URL", ""),
         },
         headers={"Cache-Control": "no-store"}
     )
@@ -543,7 +591,7 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
 이 이미지는 조립 매뉴얼의 한 페이지입니다.
 모든 STEP을 찾아 JSON으로 반환하세요.
 - step_number: STEP 번호(정수)
-- title: STEP 레이블 그대로
+- title: 이미지에 "STEP N" 레이블이 있으면 그대로. 없으면 반드시 "STEP N" 형식으로만 작성 (N=step_number). 이미지 내용 설명 절대 금지.
 - desc: 이미지 바로 아래 지시문을 한 글자도 빠짐없이 복사. 한국어 우선, 없으면 영문 그대로. 요약/해석 금지. 문장 내 줄바꿈 금지.
 - box_2d: 이미지 영역만 [ymin,xmin,ymax,xmax] 0~1000 스케일
 규칙: Teaching STEAM 로고/브랜드 무시. desc 없으면 제외.
@@ -572,11 +620,20 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
                 step_num = s.get("step_number", 0)
                 c_path   = os.path.join(job_dir, f"step_p{page_num}_{step_num}.jpg")
                 full_img.crop((l, t, r, b)).convert("RGB").save(c_path, "JPEG", quality=92)
-                steps.append({
-                    "step": step_num, "title": s.get("title", f"STEP {step_num}"),
+                step_data = {
+                    "step": step_num, "title": f"STEP {step_num}",  # 항상 STEP N으로 고정
                     "desc": desc,
                     "image_url": f"/outputs/{os.path.relpath(c_path, OUTPUT_DIR)}".replace("\\", "/")
-                })
+                }
+                steps.append(step_data)
+                # 폴링 프리뷰 — 추출 즉시 state에 추가 (중복 제거)
+                global _preview_steps, _preview_updated
+                _preview_steps.append(step_data)
+                _preview_updated = True
+                existing_urls = {s["image_url"] for s in state["manual_steps"]}
+                if step_data["image_url"] not in existing_urls:
+                    state["manual_steps"] = state["manual_steps"] + [step_data]
+                    state["file_info"]["steps"] = len(state["manual_steps"])
                 print(f"  ✅ STEP {step_num}: {desc[:40]}...")
         return steps
     except Exception as e:
@@ -594,7 +651,10 @@ async def detect_and_crop_image(client, img_path, base_idx):
             img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         prompt = """조립/공예 매뉴얼 이미지에서 모든 STEP을 탐지하세요.
-- step_number, title, desc(텍스트 있으면 원문, 없으면 시각적 동작 한국어 설명), box_2d([ymin,xmin,ymax,xmax] 0~1000)
+- step_number: 정수
+- title: 이미지에 레이블이 있으면 그대로, 없으면 "STEP N" 형식으로만 (이미지 내용 설명 절대 금지)
+- desc: 텍스트 있으면 원문, 없으면 시각적 동작 한국어 설명
+- box_2d: [ymin,xmin,ymax,xmax] 0~1000
 {"steps":[{"step_number":int,"title":str,"desc":str,"box_2d":[int,int,int,int]}]}"""
 
         res = await client.post(GEMINI_URL, json={
@@ -635,9 +695,15 @@ async def detect_and_crop_image(client, img_path, base_idx):
 # ── API 라우팅 ─────────────────────────────────────────────────────────────
 @app.post("/process-manual")
 async def handle_manual(files: List[UploadFile] = File(...)):
+    global _analysis_start_time, _preview_steps, _preview_updated
     start_time = time.time()
+    _analysis_start_time = start_time
+    _preview_steps = []
+    _preview_updated = False
+    state["file_info"] = {"name": "", "pages": 0, "steps": 0}
     state.update({"is_analyzed": False, "step_locked": False,
-                  "progress_step": "upload", "ai_result": "WAIT"})
+                  "progress_step": "upload", "ai_result": "WAIT",
+                  "analysis_time": 0.0})  # 시작 시 즉시 초기화
     job_dir   = os.path.join(OUTPUT_DIR, f"sess_{int(start_time)}")
     os.makedirs(job_dir, exist_ok=True)
     all_steps = []
@@ -648,6 +714,25 @@ async def handle_manual(files: List[UploadFile] = File(...)):
             with open(file_path, "wb") as b:
                 b.write(await f.read())
             ext = f.filename.lower()
+            state["file_info"]["name"] = f.filename
+            state["uploaded_preview"] = ""  # 초기화
+
+            # 업로드 즉시 미리보기 생성
+            if ext.endswith(".pdf"):
+                # PDF 첫 페이지를 썸네일로 변환
+                thumb_path = os.path.join(job_dir, "preview_thumb.jpg")
+                result = subprocess.run(
+                    ["pdftoppm", "-jpeg", "-r", "72", "-f", "1", "-l", "1",
+                     file_path, os.path.join(job_dir, "thumb")],
+                    capture_output=True
+                )
+                thumb_files = sorted(glob.glob(os.path.join(job_dir, "thumb-*.jpg")))
+                if thumb_files:
+                    state["uploaded_preview"] = f"/outputs/{os.path.relpath(thumb_files[0], OUTPUT_DIR)}".replace("\\", "/")
+            elif ext.endswith((".png", ".jpg", ".jpeg")):
+                # 이미지는 그대로 사용
+                state["uploaded_preview"] = f"/outputs/{os.path.relpath(file_path, OUTPUT_DIR)}".replace("\\", "/")
+
             if ext.endswith(".pdf"):
                 pages_dir = os.path.join(job_dir, "pages")
                 os.makedirs(pages_dir, exist_ok=True)
@@ -707,10 +792,11 @@ async def set_step(body: dict):
     locked = bool(body.get("locked", True))
     state["current_step_idx"] = idx
     state["step_locked"]      = locked
-    state["ai_result"]        = "WAIT"
-    state["ai_response"]      = "대기 중..."
+    # ai_result는 즉시 초기화하지 않음 — TTS/UI가 결과를 보여준 후 자연스럽게 사라지도록
     save_session()
     return {"status": "ok", "current_step_idx": idx}
+
+_analysis_start_time: float = 0.0  # 분석 시작 시각 (전역)
 
 @app.get("/status")
 async def get_status():
@@ -728,6 +814,11 @@ async def get_status():
         "last_rtt":         state["last_rtt"],
         "log":              state["log"],
         "has_frame":        state["latest_frame"] is not None,
+        "file_info":        state["file_info"],
+        "uploaded_preview": state["uploaded_preview"],
+        "elapsed_time":     round(time.time() - _analysis_start_time, 1)
+                            if state["progress_step"] not in ("upload", "done") and _analysis_start_time > 0
+                            else state["analysis_time"],
     }
 
 @app.post("/reset")
@@ -737,6 +828,8 @@ async def reset_session():
         "ai_response": "대기 중...", "ai_result": "WAIT",
         "is_analyzed": False, "analysis_time": 0.0,
         "step_locked": False, "progress_step": "upload",
+        "file_info": {"name": "", "pages": 0, "steps": 0},
+        "uploaded_preview": "",
     })
     if os.path.exists(SESSION_FILE):
         os.remove(SESSION_FILE)
@@ -765,20 +858,18 @@ async def trigger_vlm_analysis():
             if idx + 1 < len(state["manual_steps"]):
                 state["current_step_idx"] = idx + 1
                 save_session()
+                # 2초 후 ai_result 초기화 (TTS 끝날 시간 확보)
+                async def _reset_after_delay():
+                    await asyncio.sleep(2.0)
+                    if state["ai_result"] == "PASS":
+                        state["ai_result"]   = "WAIT"
+                        state["ai_response"] = "대기 중..."
+                asyncio.create_task(_reset_after_delay())
         return {"status": "success", "prediction": prediction,
                 "current_step": state["current_step_idx"], "duration": duration}
     else:
         err = prediction.get("reason", "응답 없음") if prediction else "응답 없음"
         return {"status": "error", "message": f"VLM 실패: {err}"}
-
-@app.get("/stream")
-async def stream():
-    async def gen():
-        while True:
-            if state["latest_frame"]:
-                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + state["latest_frame"] + b"\r\n"
-            await asyncio.sleep(0.04)
-    return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.get("/")
 @app.get("/mobile")
