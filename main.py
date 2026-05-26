@@ -71,13 +71,13 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── ESP32 하드웨어 설정 ────────────────────────────────────────────────────
-ESP32_IP = "192.168.137.182"
+ESP32_IP = "192.168.137.227"
 UDP_PORT = 12345
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 hw_state = {
     "PAN_MIN_LIMIT": 40.0,  "PAN_MAX_LIMIT": 140.0,
-    "TILT_MIN_LIMIT": 50.0, "TILT_MAX_LIMIT": 100.0,
+    "TILT_MIN_LIMIT": 50.0, "TILT_MAX_LIMIT": 150.0,
     "current_pan": 90.0,    "current_tilt": 90.0,
     "smooth_pan": 90.0,     "smooth_tilt": 90.0,
     "is_servo_active": True,
@@ -187,17 +187,51 @@ def load_session() -> bool:
 
 # ── 하드웨어 보조 함수 ─────────────────────────────────────────────────────
 def calculate_servo_angles(hx, hy):
-    dist_x, dist_y = hx - 0.5, hy - 0.5
-    if abs(dist_x) < 0.15 and abs(dist_y) < 0.15:
-        hw_state["current_pan"]  = hw_state["smooth_pan"]
-        hw_state["current_tilt"] = hw_state["smooth_tilt"]
-    else:
-        hw_state["current_pan"]  += dist_x * 4.0
-        hw_state["current_tilt"] += dist_y * 4.0
-    hw_state["current_pan"]  = max(hw_state["PAN_MIN_LIMIT"],  min(hw_state["PAN_MAX_LIMIT"],  hw_state["current_pan"]))
-    hw_state["current_tilt"] = max(hw_state["TILT_MIN_LIMIT"], min(hw_state["TILT_MAX_LIMIT"], hw_state["current_tilt"]))
-    hw_state["smooth_pan"]   = hw_state["smooth_pan"]  * 0.8 + hw_state["current_pan"]  * 0.2
-    hw_state["smooth_tilt"]  = hw_state["smooth_tilt"] * 0.8 + hw_state["current_tilt"] * 0.2
+    dist_x = hx - 0.5
+    dist_y = hy - 0.5
+
+    DEADZONE = 0.10
+    GAIN = 4.0
+    SMOOTH = 0.2
+
+    move_x = 0.0
+    move_y = 0.0
+
+    # x축: 데드존을 벗어난 만큼만 보정
+    if dist_x > DEADZONE:
+        move_x = dist_x - DEADZONE
+    elif dist_x < -DEADZONE:
+        move_x = dist_x + DEADZONE
+
+    # y축: 데드존을 벗어난 만큼만 보정
+    if dist_y > DEADZONE:
+        move_y = dist_y - DEADZONE
+    elif dist_y < -DEADZONE:
+        move_y = dist_y + DEADZONE
+
+    # 데드존 밖으로 벗어난 양만큼만 서보 목표값 변경
+    hw_state["current_pan"]  -= move_x * GAIN
+    hw_state["current_tilt"] += move_y * GAIN
+
+    hw_state["current_pan"] = max(
+        hw_state["PAN_MIN_LIMIT"],
+        min(hw_state["PAN_MAX_LIMIT"], hw_state["current_pan"])
+    )
+
+    hw_state["current_tilt"] = max(
+        hw_state["TILT_MIN_LIMIT"],
+        min(hw_state["TILT_MAX_LIMIT"], hw_state["current_tilt"])
+    )
+
+    hw_state["smooth_pan"] = (
+        hw_state["smooth_pan"] * (1.0 - SMOOTH)
+        + hw_state["current_pan"] * SMOOTH
+    )
+
+    hw_state["smooth_tilt"] = (
+        hw_state["smooth_tilt"] * (1.0 - SMOOTH)
+        + hw_state["current_tilt"] * SMOOTH
+    )
 
 def get_finger_status(hand_lms):
     wrist = hand_lms.landmark[0]
@@ -207,6 +241,53 @@ def get_finger_status(hand_lms):
         dp = math.sqrt((hand_lms.landmark[pip].x - wrist.x)**2 + (hand_lms.landmark[pip].y - wrist.y)**2)
         fingers.append(dt > dp)
     return fingers
+
+def hand_area_score(hand_lms):
+    """
+    손이 화면에서 차지하는 면적을 계산.
+    값이 클수록 카메라에 더 가까운 손으로 판단.
+    """
+    xs = [lm.x for lm in hand_lms.landmark]
+    ys = [lm.y for lm in hand_lms.landmark]
+
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+
+    return width * height
+
+
+def select_closest_hand(results, prefer_label=None):
+    """
+    검출된 손 중 가장 가까운 손 선택.
+    prefer_label='Right'를 주면 오른손 중 가장 가까운 손만 선택.
+    prefer_label=None이면 모든 손 중 가장 가까운 손 선택.
+    """
+    if not results.multi_hand_landmarks:
+        return None, None
+
+    candidates = []
+
+    for idx, hand_lms in enumerate(results.multi_hand_landmarks):
+        label = None
+
+        if results.multi_handedness and idx < len(results.multi_handedness):
+            label = results.multi_handedness[idx].classification[0].label
+
+        if prefer_label is not None and label != prefer_label:
+            continue
+
+        score = hand_area_score(hand_lms)
+        candidates.append((score, hand_lms, label))
+
+    if not candidates:
+        return None, None
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+
+    closest_hand_lms = candidates[0][1]
+    closest_label = candidates[0][2]
+
+    return closest_hand_lms, closest_label
 
 def heavy_processing(img_bgr, level=2):
     h, w = img_bgr.shape[:2]
@@ -218,21 +299,28 @@ def heavy_processing(img_bgr, level=2):
     mp_input = cv2.resize(img_bgr, (160, 120))  # 속도 최적화: 160x120으로 축소
     results  = hands.process(cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB))
 
-    if results.multi_hand_landmarks and results.multi_handedness:
-        for idx, hand_info in enumerate(results.multi_handedness):
-            if hand_info.classification[0].label == "Right":
-                hand_lms = results.multi_hand_landmarks[idx]
-                hx, hy   = hand_lms.landmark[8].x, hand_lms.landmark[8].y
-                if hw_state["is_servo_active"]:
-                    calculate_servo_angles(hx, hy)
-                    servo_msg = f"P{hw_state['smooth_pan']:.1f}T{hw_state['smooth_tilt']:.1f}"
-                    sock.sendto(servo_msg.encode(), (ESP32_IP, UDP_PORT))
-                f_status = get_finger_status(hand_lms)
-                if f_status == [False, False, False, False]:
-                    detected_stepper_cmd = "STOP"
-                elif f_status == [True, True, False, False]:
-                    detected_stepper_cmd = "DOWN" if hand_lms.landmark[8].y < hand_lms.landmark[0].y else "UP"
+    if results.multi_hand_landmarks:
+        hand_lms, hand_label = select_closest_hand(results, prefer_label="Right")
 
+    if hand_lms is not None:
+        hx, hy = hand_lms.landmark[8].x, hand_lms.landmark[8].y
+
+        if hw_state["is_servo_active"]:
+            calculate_servo_angles(hx, hy)
+            servo_msg = f"P{hw_state['smooth_pan']:.1f}T{hw_state['smooth_tilt']:.1f}"
+            sock.sendto(servo_msg.encode(), (ESP32_IP, UDP_PORT))
+
+        f_status = get_finger_status(hand_lms)
+
+        if f_status == [False, False, False, False]:
+            detected_stepper_cmd = "STOP"
+
+        elif f_status == [True, True, False, False]:
+            detected_stepper_cmd = (
+                "DOWN"
+                if hand_lms.landmark[8].y < hand_lms.landmark[0].y
+                else "UP"
+            )
     # 적응형 스트리밍 — 현재 레벨에 맞는 해상도/품질로 인코딩
     out_w, out_h, quality, _ = STREAM_LEVELS[level]
     img_out = cv2.resize(img_bgr, (out_w, out_h), interpolation=cv2.INTER_LINEAR)

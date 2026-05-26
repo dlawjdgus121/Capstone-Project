@@ -1449,17 +1449,21 @@ setStatus(prev => ({
     justifyContent:'center'
 }}>
     <video
-        ref={pcVideoRef}
-        autoPlay
-        playsInline
-        muted
-        style={{
-            width:'100%',
-            height:'100%',
-            objectFit:'cover',
-            display: streamAlive ? 'block' : 'none',
-        }}
-    />
+    ref={pcVideoRef}
+    autoPlay
+    playsInline
+    muted
+    style={{
+        width:'100%',
+        height:'100%',
+        objectFit:'cover',
+        display: streamAlive ? 'block' : 'none',
+
+        // 좌우반전
+        transform: 'scaleX(-1)',
+        transformOrigin: 'center',
+    }}
+/>
 
     {!streamAlive && (
         <div style={{
