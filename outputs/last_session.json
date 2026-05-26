@@ -3,6 +3,7 @@
   "manual_steps": [
     {
       "step": 1,
+<<<<<<< Updated upstream
       "title": "1",
       "desc": "정사각형 종이를 대각선 방향으로 반을 접었다가 폅니다.",
       "image_url": "/outputs/sess_1779163033/img_step_1_1779163049094.jpg"
@@ -78,14 +79,99 @@
       "title": "13",
       "desc": "Stretch the wings, and blow up the body through a hole underneath.",
       "image_url": "/outputs/sess_1779163033/img_step_13_1779163049107.jpg"
+=======
+      "title": "",
+      "desc": "종이를 대각선으로 접습니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_1_1779530409041.jpg"
+    },
+    {
+      "step": 2,
+      "title": "",
+      "desc": "종이를 반으로 접습니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_2_1779530409050.jpg"
+    },
+    {
+      "step": 3,
+      "title": "",
+      "desc": "종이를 다시 반으로 접습니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_3_1779530409053.jpg"
+    },
+    {
+      "step": 4,
+      "title": "",
+      "desc": "종이가 완전히 접힌 모습입니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_4_1779530409057.jpg"
+    },
+    {
+      "step": 5,
+      "title": "",
+      "desc": "종이의 한쪽 모서리를 접어 올립니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_5_1779530409062.jpg"
+    },
+    {
+      "step": 6,
+      "title": "",
+      "desc": "종이를 펼쳐서 다이아몬드 형태로 만듭니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_6_1779530409066.jpg"
+    },
+    {
+      "step": 7,
+      "title": "",
+      "desc": "Fold the other side and do the same as shown in step",
+      "image_url": "/outputs/sess_1779530388/img_step_7_1779530409068.jpg"
+    },
+    {
+      "step": 8,
+      "title": "",
+      "desc": "양쪽을 동일하게 접어 대칭적인 다이아몬드 형태로 만듭니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_8_1779530409072.jpg"
+    },
+    {
+      "step": 9,
+      "title": "",
+      "desc": "Fold the other side the same as shown in",
+      "image_url": "/outputs/sess_1779530388/img_step_9_1779530409078.jpg"
+    },
+    {
+      "step": 10,
+      "title": "",
+      "desc": "한쪽 끝을 얇게 접어 올립니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_10_1779530409082.jpg"
+    },
+    {
+      "step": 11,
+      "title": "",
+      "desc": "끝부분을 접어 학의 머리를 만들고, 날개를 접습니다.",
+      "image_url": "/outputs/sess_1779530388/img_step_11_1779530409085.jpg"
+    },
+    {
+      "step": 12,
+      "title": "",
+      "desc": "Make face by folding toward inside.",
+      "image_url": "/outputs/sess_1779530388/img_step_12_1779530409089.jpg"
+    },
+    {
+      "step": 13,
+      "title": "",
+      "desc": "Stretch the wings, and blow up the body through a hole underneath.",
+      "image_url": "/outputs/sess_1779530388/img_step_13_1779530409093.jpg"
+>>>>>>> Stashed changes
     },
     {
       "step": 14,
       "title": "Finished",
       "desc": "Finished",
+<<<<<<< Updated upstream
       "image_url": "/outputs/sess_1779163033/img_step_14_1779163049108.jpg"
     }
   ],
   "analysis_time": 16.11,
   "step_locked": true
+=======
+      "image_url": "/outputs/sess_1779530388/img_step_14_1779530409096.jpg"
+    }
+  ],
+  "analysis_time": 20.46,
+  "step_locked": false
+>>>>>>> Stashed changes
 }
