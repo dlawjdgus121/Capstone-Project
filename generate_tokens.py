@@ -6,7 +6,7 @@ load_dotenv()
 try:
     from livekit import api
 except ImportError:
-    print("❌ pip install livekit 먼저 실행하세요")
+    print("❌ pip install python-dotenv livekit livekit-api 먼저 실행하세요")
     exit(1)
 
 API_KEY    = os.getenv("LIVEKIT_API_KEY", "")

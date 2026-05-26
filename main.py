@@ -1064,36 +1064,44 @@ async def reset_session():
 @app.post("/trigger-vlm")
 async def trigger_vlm_analysis():
     try:
-        if not state["is_analyzed"] or not state["manual_steps"]:
+        if not state.get("is_analyzed") or not state.get("manual_steps"):
             return {"status": "error", "message": "매뉴얼 준비 안 됨"}
 
-        if not state["latest_frame"]:
+        if not state.get("latest_frame"):
             return {"status": "error", "message": "카메라 프레임 없음"}
 
-        total = len(state["manual_steps"])
-        idx = int(state.get("current_step_idx", 0))
+        manual_steps = state.get("manual_steps", [])
+        total = len(manual_steps)
 
-        # 세션 복원 후 idx가 범위를 벗어나면 500이 날 수 있어서 방어
+        if total <= 0:
+            return {"status": "error", "message": "STEP 목록 없음"}
+
+        idx = int(state.get("current_step_idx", 0) or 0)
+
         if idx < 0:
             idx = 0
+
         if idx >= total:
             idx = total - 1
             state["current_step_idx"] = idx
 
-        current_step = state["manual_steps"][idx]
+        current_step = manual_steps[idx]
 
-        if not current_step:
-            return {"status": "error", "message": "현재 STEP 정보 없음"}
+        if not isinstance(current_step, dict):
+            return {"status": "error", "message": "현재 STEP 형식 오류"}
 
-        if not current_step.get("image_url"):
+        image_url = current_step.get("image_url")
+        if not image_url:
             return {"status": "error", "message": "현재 STEP 이미지 없음"}
+
+        desc = current_step.get("desc", "")
 
         t_start = time.time()
 
         prediction = await call_runpod_inference(
-            current_step["image_url"],
+            image_url,
             state["latest_frame"],
-            current_step.get("desc", "")
+            desc,
         )
 
         duration = round(time.time() - t_start, 2)
@@ -1113,10 +1121,18 @@ async def trigger_vlm_analysis():
 
             print(f"⏱️ [VLM] {duration}s | {result}")
 
-            if result == "PASS" and not state["step_locked"]:
+            if result == "PASS" and not state.get("step_locked"):
                 if idx + 1 < len(state["manual_steps"]):
                     state["current_step_idx"] = idx + 1
                     save_session()
+
+                    async def _reset_after_delay():
+                        await asyncio.sleep(2.0)
+                        if state["ai_result"] == "PASS":
+                            state["ai_result"] = "WAIT"
+                            state["ai_response"] = "대기 중..."
+
+                    asyncio.create_task(_reset_after_delay())
 
             return {
                 "status": "success",
@@ -1124,32 +1140,12 @@ async def trigger_vlm_analysis():
                 "current_step": state["current_step_idx"],
                 "duration": duration,
                 "timing": {
-                    "vlm_latency_ms": state["vlm_latency_ms"],
-                    "vlm_proxy_ms": state["vlm_proxy_ms"],
-                    "vlm_total_s": state["vlm_total_s"],
+                    "vlm_latency_ms": state.get("vlm_latency_ms", 0.0),
+                    "vlm_proxy_ms": state.get("vlm_proxy_ms", 0.0),
+                    "vlm_total_s": state.get("vlm_total_s", 0.0),
                 },
             }
-        
-    if prediction and prediction.get("result") != "ERROR":
-        result = prediction.get("result", "UNKNOWN")
-        reason = prediction.get("reason", "분석 완료")
-        state["ai_response"] = f"[{result}] {reason}"
-        state["ai_result"]   = result
-        print(f"⏱️ [VLM] {duration}s | {result}")
-        if result == "PASS" and not state["step_locked"]:
-            if idx + 1 < len(state["manual_steps"]):
-                state["current_step_idx"] = idx + 1
-                save_session()
-                # 2초 후 ai_result 초기화 (TTS 끝날 시간 확보)
-                async def _reset_after_delay():
-                    await asyncio.sleep(2.0)
-                    if state["ai_result"] == "PASS":
-                        state["ai_result"]   = "WAIT"
-                        state["ai_response"] = "대기 중..."
-                asyncio.create_task(_reset_after_delay())
-        return {"status": "success", "prediction": prediction,
-                "current_step": state["current_step_idx"], "duration": duration}
-    else:
+
         err = prediction.get("reason", "응답 없음") if prediction else "응답 없음"
         print(f"🚨 [VLM ERROR] {err}")
         return {"status": "error", "message": f"VLM 실패: {err}"}

@@ -1,0 +1,19 @@
+.\.venv\Scripts\Activate.ps1 
+python -m pip install -r requirements.txt
+
+python -m pip install mediapipe==0.10.9 --force-reinstall
+
+환경 변수(.env) 설정
+
+//cloudflared tunnel --url http://localhost:8000
+
+
+**GPU
+pip install -r requirements.txt --ignore-installed blinker
+
+pip install --upgrade --force-reinstall torchvision
+
+python inference_sever_dy.py
+
+**CPU
+python main.py
