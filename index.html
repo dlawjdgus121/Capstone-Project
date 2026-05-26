@@ -754,13 +754,38 @@ function PCView() {
     const [view, setView] = useState(demoStart || 'landing');
     const [status, setStatus] = useState(isDemo ? {
         ai_response: '왼쪽 모서리를 조금 더 안쪽으로 접어주세요.',
-        manual_steps: DEMO_STEPS, current_step_idx: 1, has_frame: false,
-        analysis_time: 26, is_analyzed: true, step_locked: false, progress_step: 'analyze',
-        ai_result: 'WAIT', current_fps: 0, stream_level: 2,
+        manual_steps: DEMO_STEPS,
+        current_step_idx: 1,
+        has_frame: false,
+        analysis_time: 26,
+        is_analyzed: true,
+        step_locked: false,
+        progress_step: 'analyze',
+        ai_result: 'WAIT',
+        current_fps: 0,
+        stream_level: 2,
+
+        // VLM timing
+        vlm_latency_ms: 0,
+        vlm_proxy_ms: 0,
+        vlm_total_s: 0,
     } : {
-        ai_response:'대기 중...', manual_steps:[], current_step_idx:0, has_frame:false,
-        analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload',
-        ai_result:'WAIT', current_fps:0, stream_level:2,
+        ai_response:'대기 중.',
+        manual_steps:[],
+        current_step_idx:0,
+        has_frame:false,
+        analysis_time:0,
+        is_analyzed:false,
+        step_locked:false,
+        progress_step:'upload',
+        ai_result:'WAIT',
+        current_fps:0,
+        stream_level:2,
+
+        // VLM timing
+        vlm_latency_ms: 0,
+        vlm_proxy_ms: 0,
+        vlm_total_s: 0,
     });
     const [uploading, setUploading] = useState(false);
     const [userSelectedIdx, setUserSelectedIdx] = useState(null);
@@ -1037,6 +1062,17 @@ setStatus(prev => ({
     const activeIdx = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
     const currentStep = totalSteps > 0 ? status.manual_steps[activeIdx] : null;
 
+    const vlmLatencySec = status?.vlm_latency_ms
+        ? (status.vlm_latency_ms / 1000).toFixed(2)
+        : '-';
+
+    const vlmProxySec = status?.vlm_proxy_ms
+        ? (status.vlm_proxy_ms / 1000).toFixed(2)
+        : '-';
+
+    const vlmTotalSec = status?.vlm_total_s
+        ? Number(status.vlm_total_s).toFixed(2)
+        : '-';
     useEffect(() => {
         if (view !== 'coach') return;
         const el = stepRefs.current[activeIdx];
@@ -1070,12 +1106,36 @@ setStatus(prev => ({
         if (isAnalyzing || !status.has_frame) return;
         setIsAnalyzing(true);
         try {
-            const res = await fetch('/trigger-vlm', { method:'POST' });
-            const data = await res.json();
-            if (data.status !== 'success') alert(data.message || 'VLM 분석 실패');
-        } catch(e) { alert('서버 오류'); }
-        finally { setIsAnalyzing(false); }
-    }, [isAnalyzing, status.has_frame]);
+        const res = await fetch('/trigger-vlm', { method:'POST' });
+        const text = await res.text();
+
+        let data = null;
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch (parseErr) {
+            console.error('[trigger-vlm] JSON parse failed:', parseErr, text);
+            alert(`서버 응답 파싱 실패 (${res.status})`);
+            return;
+        }
+
+        console.log('[trigger-vlm]', res.status, data);
+
+        if (!res.ok) {
+            alert(data.message || `서버 오류: HTTP ${res.status}`);
+            return;
+        }
+
+        if (data.status !== 'success') {
+            alert(data.message || 'VLM 분석 실패');
+            return;
+        }
+    } catch(e) {
+        console.error('[trigger-vlm] fetch failed:', e);
+        alert(`서버 연결 오류: ${e.message || e}`);
+    } finally {
+        setIsAnalyzing(false);
+    }
+}, [isAnalyzing, status.has_frame]);
 
     const goHome = useCallback(async () => {
         cancelCountdown();
@@ -1579,6 +1639,51 @@ setStatus(prev => ({
                                     <p style={{margin:0, fontSize:22, lineHeight:1.5, fontWeight:400, color:'var(--ink)', wordBreak:'keep-all'}}>
                                         {status.has_frame ? status.ai_response : '모바일 기기를 연결하여 실시간 코칭을 받으세요.'}
                                     </p>
+                                    {status.has_frame && (
+    <div style={{
+        marginTop: 10,
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 8,
+        alignItems: 'center'
+    }}>
+        <span className="mono" style={{
+            fontSize: 10.5,
+            letterSpacing: '0.12em',
+            color: 'var(--ink-3)',
+            padding: '5px 9px',
+            border: '1px solid var(--line-2)',
+            borderRadius: 999,
+            background: 'var(--bg)'
+        }}>
+            VLM {vlmLatencySec}s
+        </span>
+
+        <span className="mono" style={{
+            fontSize: 10.5,
+            letterSpacing: '0.12em',
+            color: 'var(--ink-4)',
+            padding: '5px 9px',
+            border: '1px solid var(--line-2)',
+            borderRadius: 999,
+            background: 'var(--bg)'
+        }}>
+            PROXY {vlmProxySec}s
+        </span>
+
+        <span className="mono" style={{
+            fontSize: 10.5,
+            letterSpacing: '0.12em',
+            color: 'var(--ink-4)',
+            padding: '5px 9px',
+            border: '1px solid var(--line-2)',
+            borderRadius: 999,
+            background: 'var(--bg)'
+        }}>
+            E2E {vlmTotalSec}s
+        </span>
+    </div>
+)}
                                 </div>
                                 {status.has_frame && (
                                     <button className="btn-spline" onClick={triggerVLM} disabled={isAnalyzing}>

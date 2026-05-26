@@ -33,16 +33,30 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 import threading, re as _re
 
 def _find_cloudflared():
-    """프로젝트 루트 또는 PATH에서 cloudflared 바이너리 찾기"""
-    candidates = [
-        os.path.join(BASE_DIR, "cloudflared.exe"),
-        os.path.join(BASE_DIR, "cloudflared"),
-        "/usr/local/bin/cloudflared",
-        "cloudflared",
-    ]
+    """Find a cloudflared binary that matches the current OS."""
+    import shutil
+
+    if os.name == "nt":
+        candidates = [
+            os.path.join(BASE_DIR, "cloudflared.exe"),
+            shutil.which("cloudflared.exe"),
+            shutil.which("cloudflared"),
+        ]
+    else:
+        candidates = [
+            os.path.join(BASE_DIR, "cloudflared-linux-amd64"),
+            os.path.join(BASE_DIR, "cloudflared"),
+            "/usr/local/bin/cloudflared",
+            shutil.which("cloudflared"),
+        ]
     for c in candidates:
+        if not c:
+            continue
         if os.path.isfile(c):
-            os.chmod(c, 0o755)
+            try:
+                os.chmod(c, 0o755)
+            except OSError:
+                pass
             return c
     return None
 
@@ -60,11 +74,31 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NA
 
 raw_runpod_url = os.getenv("RUNPOD_INFERENCE_URL", "").strip()
 if raw_runpod_url:
-    if not raw_runpod_url.startswith("http"): raw_runpod_url = f"http://{raw_runpod_url}"
-    if not raw_runpod_url.endswith("/predict"): raw_runpod_url = raw_runpod_url.rstrip("/") + "/predict"
-    RUNPOD_INFERENCE_URL = raw_runpod_url
+    if not raw_runpod_url.startswith("http"):
+        raw_runpod_url = f"http://{raw_runpod_url}"
+
+    raw_runpod_base = raw_runpod_url.rstrip("/")
+
+    if raw_runpod_base.endswith("/predict"):
+        raw_runpod_base = raw_runpod_base[:-len("/predict")]
+    if raw_runpod_base.endswith("/set_step"):
+        raw_runpod_base = raw_runpod_base[:-len("/set_step")]
+    if raw_runpod_base.endswith("/set-step"):
+        raw_runpod_base = raw_runpod_base[:-len("/set-step")]
+
+    RUNPOD_INFERENCE_BASE_URL = raw_runpod_base
+    RUNPOD_SET_STEP_URL = f"{raw_runpod_base}/set_step"
+    RUNPOD_PREDICT_URL = f"{raw_runpod_base}/predict"
+
+    print(f"✅ RUNPOD BASE: {RUNPOD_INFERENCE_BASE_URL}")
+    print(f"✅ RUNPOD SET_STEP: {RUNPOD_SET_STEP_URL}")
+    print(f"✅ RUNPOD PREDICT: {RUNPOD_PREDICT_URL}")
 else:
-    RUNPOD_INFERENCE_URL = None
+    RUNPOD_INFERENCE_BASE_URL = None
+    RUNPOD_SET_STEP_URL = None
+    RUNPOD_PREDICT_URL = None
+
+last_vlm_step_key = None
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
@@ -82,6 +116,9 @@ hw_state = {
     "smooth_pan": 90.0,     "smooth_tilt": 90.0,
     "is_servo_active": True,
     "current_stepper_state": "STOP",
+    "vlm_latency_ms": 0.0,
+    "vlm_proxy_ms": 0.0,
+    "vlm_total_s": 0.0,
 }
 
 # ── MediaPipe ──────────────────────────────────────────────────────────────
@@ -130,6 +167,11 @@ state = {
     "current_fps":    0.0,
     "last_rtt":       0.0,    # ms 단위 RTT
     "is_processing":  False,
+
+    "vlm_latency_ms": 0.0,   # SGLang 실제 추론 시간
+    "vlm_proxy_ms":   0.0,   # GPU proxy 전체 처리 시간
+    "vlm_total_s":    0.0,   # Windows main.py 기준 전체 왕복 시간
+
     # 적응형 스트리밍 — FPS 기반 자동 품질 조절
     "stream_level":   2,      # 0=저화질, 1=중간, 2=고화질
     "fps_history":    [],     # 최근 FPS 기록 (평균 계산용)
@@ -448,21 +490,28 @@ async def process_video_track(track: rtc.VideoTrack):
 
 # ── RunPod 추론 ────────────────────────────────────────────────────────────
 async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc=""):
-    if not RUNPOD_INFERENCE_URL:
+    """
+    GPU proxy optimized mode:
+    - step/manual image가 바뀌면 /set_step 1회 호출
+    - 매 프레임 추론은 /predict에 camera_image만 전송
+    """
+    global last_vlm_step_key
+
+    if not RUNPOD_INFERENCE_BASE_URL:
         return {"result": "WAIT", "reason": "카메라 연결 대기 중..."}
+
     try:
-        rel_path        = manual_img_path.lstrip('/')
+        rel_path = manual_img_path.lstrip("/")
         full_manual_path = os.path.join(BASE_DIR, rel_path)
+
         if not os.path.exists(full_manual_path):
             return {"result": "ERROR", "reason": "이미지 없음"}
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                RUNPOD_INFERENCE_URL,
-                files={
-                    "manual_image": ("manual.jpg", open(full_manual_path, "rb"), "image/jpeg"),
-                    "camera_image": ("camera.jpg", io.BytesIO(camera_frame_bytes), "image/jpeg"),
-                },
-                data={"prompt": f"""You are a lenient assembly manual inspector. Be generous with PASS judgments.
+
+        # step_id는 이미지 경로 + desc 기준으로 고정
+        step_id_raw = f"{manual_img_path}|{step_desc}"
+        step_id = str(abs(hash(step_id_raw)))
+
+        prompt = f"""You are a lenient assembly manual inspector. Be generous with PASS judgments.
 
 Current step instruction: {step_desc if step_desc else "No instruction — compare the two images visually."}
 
@@ -480,27 +529,85 @@ Response format:
 - result: PASS or FAIL only.
 
 Example: "접힌 형태가 확인됩니다." → PASS / "접기가 전혀 되지 않았습니다." → FAIL
-"""},
-                timeout=15.0
+"""
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            # 1) step이 바뀐 경우에만 /set_step 호출
+            if last_vlm_step_key != step_id:
+                with open(full_manual_path, "rb") as f:
+                    set_resp = await client.post(
+                        RUNPOD_SET_STEP_URL,
+                        files={
+                            "manual_image": ("manual.jpg", f, "image/jpeg"),
+                        },
+                        data={
+                            "step_id": step_id,
+                            "prompt": prompt,
+                            "warmup": "false",
+                        },
+                    )
+
+                if set_resp.status_code != 200:
+                    body_preview = set_resp.text[:300].replace("\n", " ")
+                    print(f"🚨 [SET_STEP ERROR] {set_resp.status_code} | {body_preview}")
+                    print(f"🚨 [SET_STEP URL] {RUNPOD_SET_STEP_URL}")
+                    return {
+                        "result": "ERROR",
+                        "reason": f"스텝 등록 실패: {set_resp.status_code}",
+                    }
+
+                set_payload = set_resp.json()
+                if set_payload.get("status") != "success":
+                    return {
+                        "result": "ERROR",
+                        "reason": f"스텝 등록 오류: {set_payload.get('message', 'unknown')}",
+                    }
+
+                last_vlm_step_key = step_id
+
+            # 2) 추론은 camera_image만 전송
+            pred_resp = await client.post(
+                RUNPOD_PREDICT_URL,
+                files={
+                    "camera_image": ("camera.jpg", io.BytesIO(camera_frame_bytes), "image/jpeg"),
+                },
+                data={
+                    "step_id": step_id,
+                    "web_send_time": str(time.time()),
+                },
             )
-            if response.status_code == 200:
-                pred = response.json().get("prediction", {"result": "UNKNOWN", "reason": "분석 오류"})
-                # reason이 너무 길면 첫 문장만 잘라내기
+
+            if pred_resp.status_code == 200:
+                payload = pred_resp.json()
+
+                pred = payload.get(
+                    "prediction",
+                    {"result": "UNKNOWN", "reason": "분석 오류"},
+                )
+
+                pred["_timing"] = payload.get("timing", {})
+
                 reason = pred.get("reason", "")
                 if reason:
-                    # 첫 문장 추출 (마침표/줄바꿈 기준)
-                    for sep in ['. ', '.\n', '\n']:
+                    for sep in [". ", ".\n", "\n"]:
                         if sep in reason:
                             first = reason.split(sep)[0].strip()
                             if len(first) > 5:
                                 reason = first
                                 break
-                    # 그래도 60자 초과면 강제 자름
                     if len(reason) > 60:
                         reason = reason[:60] + "..."
                     pred["reason"] = reason
+
                 return pred
-            return {"result": "ERROR", "reason": f"서버 오류: {response.status_code}"}
+
+            body_preview = pred_resp.text[:300].replace("\n", " ")
+            print(f"🚨 [PREDICT ERROR] {pred_resp.status_code} | {body_preview}")
+            print(f"🚨 [PREDICT URL] {RUNPOD_PREDICT_URL}")
+            return {
+                "result": "ERROR",
+                "reason": f"서버 오류: {pred_resp.status_code}",
+            }
     except Exception as e:
         return {"result": "ERROR", "reason": f"통신 장애: {str(e)}"}
 
@@ -514,7 +621,14 @@ async def coaching_loop():
                 if prediction:
                     result = prediction.get("result", "UNKNOWN")
                     reason = prediction.get("reason", "분석 중...")
-                    state["ai_response"] = f"[{result}] {reason}"
+                    
+                    timing = prediction.get("_timing", {})
+                    state["vlm_latency_ms"] = float(timing.get("sglang_latency_ms", 0.0) or 0.0)
+                    state["vlm_proxy_ms"]   = float(timing.get("e2e_proxy_ms", 0.0) or 0.0)
+
+                    # 화면에 바로 보이게 ai_response에도 추가
+                    lat_s = state["vlm_latency_ms"] / 1000.0
+                    state["ai_response"] = f"[{result}] {reason} ({lat_s:.2f}s)"
                     state["ai_result"]   = result
                     if result == "PASS" and not state["step_locked"]:
                         if idx + 1 < len(state["manual_steps"]):
@@ -880,7 +994,12 @@ async def set_step(body: dict):
     locked = bool(body.get("locked", True))
     state["current_step_idx"] = idx
     state["step_locked"]      = locked
-    # ai_result는 즉시 초기화하지 않음 — TTS/UI가 결과를 보여준 후 자연스럽게 사라지도록
+# ai_result는 즉시 초기화하지 않음 — TTS/UI가 결과를 보여준 후 자연스럽게 사라지도록
+    state["ai_result"]        = "WAIT"
+    state["ai_response"]      = "대기 중..."
+    state["vlm_latency_ms"] = 0.0
+    state["vlm_proxy_ms"] = 0.0
+    state["vlm_total_s"] = 0.0    
     save_session()
     return {"status": "ok", "current_step_idx": idx}
 
@@ -900,6 +1019,11 @@ async def get_status():
         "current_fps":      state["current_fps"],
         "stream_level":     state["stream_level"],
         "last_rtt":         state["last_rtt"],
+
+        "vlm_latency_ms":   state["vlm_latency_ms"],
+        "vlm_proxy_ms":     state["vlm_proxy_ms"],
+        "vlm_total_s":      state["vlm_total_s"],
+
         "log":              state["log"],
         "has_frame":        state["latest_frame"] is not None,
         "file_info":        state["file_info"],
@@ -918,6 +1042,20 @@ async def reset_session():
         "step_locked": False, "progress_step": "upload",
         "file_info": {"name": "", "pages": 0, "steps": 0},
         "uploaded_preview": "",
+
+        "manual_steps": [],
+        "current_step_idx": 0,
+        "ai_response": "대기 중.",
+        "ai_result": "WAIT",
+        "is_analyzed": False,
+        "analysis_time": 0.0,
+        "step_locked": False,
+        "progress_step": "upload",
+
+        # VLM timing reset
+        "vlm_latency_ms": 0.0,
+        "vlm_proxy_ms": 0.0,
+        "vlm_total_s": 0.0,
     })
     if os.path.exists(SESSION_FILE):
         os.remove(SESSION_FILE)
@@ -925,17 +1063,73 @@ async def reset_session():
 
 @app.post("/trigger-vlm")
 async def trigger_vlm_analysis():
-    if not state["is_analyzed"] or not state["manual_steps"]:
-        return {"status": "error", "message": "매뉴얼 준비 안 됨"}
-    if not state["latest_frame"]:
-        return {"status": "error", "message": "카메라 프레임 없음"}
+    try:
+        if not state["is_analyzed"] or not state["manual_steps"]:
+            return {"status": "error", "message": "매뉴얼 준비 안 됨"}
 
-    idx          = state["current_step_idx"]
-    current_step = state["manual_steps"][idx]
-    t_start      = time.time()
-    prediction   = await call_runpod_inference(current_step["image_url"], state["latest_frame"], current_step.get("desc", ""))
-    duration     = round(time.time() - t_start, 2)
+        if not state["latest_frame"]:
+            return {"status": "error", "message": "카메라 프레임 없음"}
 
+        total = len(state["manual_steps"])
+        idx = int(state.get("current_step_idx", 0))
+
+        # 세션 복원 후 idx가 범위를 벗어나면 500이 날 수 있어서 방어
+        if idx < 0:
+            idx = 0
+        if idx >= total:
+            idx = total - 1
+            state["current_step_idx"] = idx
+
+        current_step = state["manual_steps"][idx]
+
+        if not current_step:
+            return {"status": "error", "message": "현재 STEP 정보 없음"}
+
+        if not current_step.get("image_url"):
+            return {"status": "error", "message": "현재 STEP 이미지 없음"}
+
+        t_start = time.time()
+
+        prediction = await call_runpod_inference(
+            current_step["image_url"],
+            state["latest_frame"],
+            current_step.get("desc", "")
+        )
+
+        duration = round(time.time() - t_start, 2)
+        state["vlm_total_s"] = duration
+
+        if prediction and prediction.get("result") != "ERROR":
+            result = prediction.get("result", "UNKNOWN")
+            reason = prediction.get("reason", "분석 완료")
+
+            timing = prediction.get("_timing", {})
+            state["vlm_latency_ms"] = float(timing.get("sglang_latency_ms", 0.0) or 0.0)
+            state["vlm_proxy_ms"] = float(timing.get("e2e_proxy_ms", 0.0) or 0.0)
+
+            lat_s = state["vlm_latency_ms"] / 1000.0
+            state["ai_response"] = f"[{result}] {reason} ({lat_s:.2f}s)"
+            state["ai_result"] = result
+
+            print(f"⏱️ [VLM] {duration}s | {result}")
+
+            if result == "PASS" and not state["step_locked"]:
+                if idx + 1 < len(state["manual_steps"]):
+                    state["current_step_idx"] = idx + 1
+                    save_session()
+
+            return {
+                "status": "success",
+                "prediction": prediction,
+                "current_step": state["current_step_idx"],
+                "duration": duration,
+                "timing": {
+                    "vlm_latency_ms": state["vlm_latency_ms"],
+                    "vlm_proxy_ms": state["vlm_proxy_ms"],
+                    "vlm_total_s": state["vlm_total_s"],
+                },
+            }
+        
     if prediction and prediction.get("result") != "ERROR":
         result = prediction.get("result", "UNKNOWN")
         reason = prediction.get("reason", "분석 완료")
@@ -957,7 +1151,16 @@ async def trigger_vlm_analysis():
                 "current_step": state["current_step_idx"], "duration": duration}
     else:
         err = prediction.get("reason", "응답 없음") if prediction else "응답 없음"
+        print(f"🚨 [VLM ERROR] {err}")
         return {"status": "error", "message": f"VLM 실패: {err}"}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"trigger-vlm 예외: {type(e).__name__}: {str(e)}",
+        }
 
 @app.get("/")
 @app.get("/mobile")
