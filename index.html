@@ -150,6 +150,12 @@
             position: relative;
             overflow: hidden;
         }
+        .camera-crop-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center center;
+        }
 
         .stat-dot {
             display: inline-block; width: 6px; height: 6px; border-radius: 50%;
@@ -158,6 +164,7 @@
         .stat-dot.live { background: var(--good); animation: live-pulse 1.8s infinite; }
         .stat-dot.warn { background: var(--warn); animation: live-pulse 1.4s infinite; }
         .stat-dot.bad  { background: var(--bad);  animation: live-pulse 0.9s infinite; }
+        .timing-chips > span:nth-of-type(n+5) { display: none; }
         @keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
         .pdot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
@@ -717,7 +724,7 @@ function UploadProgress({ status, onCancel }) {
     );
 }
 
-function PingIndicator({ rtt, fps, streamLevel }) {
+function PingIndicator({ rtt, fps, streamLevel, streamSize }) {
     const cls   = rtt === null ? '' : rtt <= 50 ? 'live' : rtt <= 150 ? 'warn' : 'bad';
     const label = rtt === null ? '—' : `${rtt}ms`;
     const lvls  = {0:'240p',1:'360p',2:'540p',3:'720p'};
@@ -732,6 +739,10 @@ function PingIndicator({ rtt, fps, streamLevel }) {
             </>}
             <span style={{color:'var(--ink-4)'}}>·</span>
             <span style={{color:'var(--ink-3)'}}>{lvls[lvl]}</span>
+            {streamSize && <>
+                <span style={{color:'var(--ink-4)'}}>·</span>
+                <span style={{color:'var(--ink-3)'}}>{streamSize}</span>
+            </>}
         </div>
     );
 }
@@ -767,8 +778,18 @@ function PCView() {
 
         // VLM timing
         vlm_latency_ms: 0,
+        vlm_inference_ms: 0,
         vlm_proxy_ms: 0,
         vlm_total_s: 0,
+        vlm_image_send_ms: 0,
+        vlm_result_recv_ms: 0,
+        vlm_e2e_ms: 0,
+        vlm_camera_kb: 0,
+        recv_frame_size: '',
+        stream_frame_size: '',
+        vlm_frame_size: '',
+        hand_frame_size: '',
+        stream_camera_kb: 0,
     } : {
         ai_response:'대기 중.',
         manual_steps:[],
@@ -784,8 +805,18 @@ function PCView() {
 
         // VLM timing
         vlm_latency_ms: 0,
+        vlm_inference_ms: 0,
         vlm_proxy_ms: 0,
         vlm_total_s: 0,
+        vlm_image_send_ms: 0,
+        vlm_result_recv_ms: 0,
+        vlm_e2e_ms: 0,
+        vlm_camera_kb: 0,
+        recv_frame_size: '',
+        stream_frame_size: '',
+        vlm_frame_size: '',
+        hand_frame_size: '',
+        stream_camera_kb: 0,
     });
     const [uploading, setUploading] = useState(false);
     const [userSelectedIdx, setUserSelectedIdx] = useState(null);
@@ -1062,17 +1093,27 @@ setStatus(prev => ({
     const activeIdx = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
     const currentStep = totalSteps > 0 ? status.manual_steps[activeIdx] : null;
 
-    const vlmLatencySec = status?.vlm_latency_ms
-        ? (status.vlm_latency_ms / 1000).toFixed(2)
+    const msToSecLabel = (ms) => {
+        const n = Number(ms || 0);
+        return n > 0 ? (n / 1000).toFixed(2) : '-';
+    };
+    const vlmImageSendSec = msToSecLabel(status?.vlm_image_send_ms);
+    const vlmInferenceSec = msToSecLabel(status?.vlm_inference_ms ?? status?.vlm_latency_ms);
+    const vlmResultRecvSec = msToSecLabel(status?.vlm_result_recv_ms);
+    const vlmE2ESec = status?.vlm_e2e_ms
+        ? msToSecLabel(status.vlm_e2e_ms)
+        : status?.vlm_total_s
+            ? Number(status.vlm_total_s).toFixed(2)
+            : '-';
+
+    const recvFrameLabel = status?.recv_frame_size || '-';
+    const streamFrameLabel = status?.stream_frame_size || '-';
+    const vlmFrameLabel = status?.vlm_frame_size || '-';
+    const handFrameLabel = status?.hand_frame_size || '-';
+    const vlmCameraKb = status?.vlm_camera_kb
+        ? Number(status.vlm_camera_kb).toFixed(1)
         : '-';
 
-    const vlmProxySec = status?.vlm_proxy_ms
-        ? (status.vlm_proxy_ms / 1000).toFixed(2)
-        : '-';
-
-    const vlmTotalSec = status?.vlm_total_s
-        ? Number(status.vlm_total_s).toFixed(2)
-        : '-';
     useEffect(() => {
         if (view !== 'coach') return;
         const el = stepRefs.current[activeIdx];
@@ -1188,10 +1229,10 @@ setStatus(prev => ({
             setFlashType('pass');
             setTimeout(() => setFlashType(null), 900);
             setPassToast(true);
-            const latestIdx = statusRef.current.current_step_idx;
-            setUserSelectedIdx(null); setFlashKey(k=>k+1);
-            fetch('/set-step', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({idx:latestIdx, locked:false}) }).catch(()=>{});
-            passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, 1800);
+            setUserSelectedIdx(null);
+            setFlashKey(k=>k+1);
+            const holdMs = Math.max(500, Math.ceil((status.pass_hold_remaining_s ?? 3) * 1000));
+            passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, holdMs);
         } else if (r === 'FAIL') {
             if (passTimerRef.current) { clearTimeout(passTimerRef.current); passTimerRef.current=null; setPassToast(false); }
             setFlashType('fail');
@@ -1248,8 +1289,7 @@ setStatus(prev => ({
             {passToast && (
                 <div className="toast">
                     <span style={{display:'inline-block', width:6, height:6, borderRadius:'50%', background:'var(--good)'}}/>
-                    PASS · 다음 단계로 이동합니다
-                    <button onClick={cancelCountdown} style={{background:'transparent', color:'var(--bg)', border:'none', opacity:0.6, cursor:'pointer', fontFamily:'var(--font-mono)', fontSize:11}}>취소</button>
+                    {status.pending_step_idx !== null ? 'PASS · 3초 후 다음 단계로 이동합니다' : 'PASS'}
                 </div>
             )}
 
@@ -1513,10 +1553,8 @@ setStatus(prev => ({
     autoPlay
     playsInline
     muted
+    className="camera-crop-video"
     style={{
-        width:'100%',
-        height:'100%',
-        objectFit:'cover',
         display: streamAlive ? 'block' : 'none',
 
         // 좌우반전
@@ -1603,6 +1641,7 @@ setStatus(prev => ({
             rtt={rtt}
             fps={status.current_fps}
             streamLevel={status.stream_level}
+            streamSize={status.stream_frame_size}
         />
     </div>
 </div>
@@ -1640,7 +1679,7 @@ setStatus(prev => ({
                                         {status.has_frame ? status.ai_response : '모바일 기기를 연결하여 실시간 코칭을 받으세요.'}
                                     </p>
                                     {status.has_frame && (
-    <div style={{
+    <div className="timing-chips" style={{
         marginTop: 10,
         display: 'flex',
         flexWrap: 'wrap',
@@ -1656,7 +1695,7 @@ setStatus(prev => ({
             borderRadius: 999,
             background: 'var(--bg)'
         }}>
-            VLM {vlmLatencySec}s
+            SEND IMG {vlmImageSendSec}s
         </span>
 
         <span className="mono" style={{
@@ -1668,7 +1707,7 @@ setStatus(prev => ({
             borderRadius: 999,
             background: 'var(--bg)'
         }}>
-            PROXY {vlmProxySec}s
+            VLM {vlmInferenceSec}s
         </span>
 
         <span className="mono" style={{
@@ -1680,7 +1719,55 @@ setStatus(prev => ({
             borderRadius: 999,
             background: 'var(--bg)'
         }}>
-            E2E {vlmTotalSec}s
+            RECV {vlmResultRecvSec}s
+        </span>
+
+        <span className="mono" style={{
+            fontSize: 10.5,
+            letterSpacing: '0.12em',
+            color: 'var(--ink-3)',
+            padding: '5px 9px',
+            border: '1px solid var(--line-2)',
+            borderRadius: 999,
+            background: 'var(--bg)'
+        }}>
+            E2E {vlmE2ESec}s
+        </span>
+
+        <span className="mono" style={{
+            fontSize: 10.5,
+            letterSpacing: '0.12em',
+            color: 'var(--ink-4)',
+            padding: '5px 9px',
+            border: '1px solid var(--line-2)',
+            borderRadius: 999,
+            background: 'var(--bg)'
+        }}>
+            VIEW {recvFrameLabel} → {streamFrameLabel}
+        </span>
+
+        <span className="mono" style={{
+            fontSize: 10.5,
+            letterSpacing: '0.12em',
+            color: 'var(--ink-4)',
+            padding: '5px 9px',
+            border: '1px solid var(--line-2)',
+            borderRadius: 999,
+            background: 'var(--bg)'
+        }}>
+            VLM IN {vlmFrameLabel} · {vlmCameraKb}KB
+        </span>
+
+        <span className="mono" style={{
+            fontSize: 10.5,
+            letterSpacing: '0.12em',
+            color: 'var(--ink-4)',
+            padding: '5px 9px',
+            border: '1px solid var(--line-2)',
+            borderRadius: 999,
+            background: 'var(--bg)'
+        }}>
+            HAND {handFrameLabel}
         </span>
     </div>
 )}

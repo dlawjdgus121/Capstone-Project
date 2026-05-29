@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    from livekit import api
+    from livekit_client import api
 except ImportError:
     print("❌ pip install python-dotenv livekit livekit-api 먼저 실행하세요")
     exit(1)

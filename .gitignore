@@ -12,12 +12,13 @@ __pycache__/
 *.mp4
 *.wav
 *.mp3
+*.json
+outputs/
 data/ref_images/*
 # 단, 폴더 자체는 유지하고 싶다면 아래 줄 추가
 !data/ref_images/.gitkeep
 
 # --- [3] 보안 키 파일 (해킹 당하기 싫으면 필수) ---
-config.py
 secrets.json
 *.env
 
