@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import time
 from typing import List
 
@@ -15,6 +16,13 @@ from vlm import (
     reset_pass_transition,
     run_manual_vlm_analysis,
 )
+
+try:
+    import edge_tts
+    _EDGE_TTS_OK = True
+except ImportError:
+    _EDGE_TTS_OK = False
+    print("⚠️ edge-tts 없음 — pip install edge-tts")
 
 
 def register_routes(app: FastAPI) -> None:
@@ -58,12 +66,15 @@ def register_routes(app: FastAPI) -> None:
             return {"status": "error", "message": "매뉴얼 없음"}
         idx = max(0, min(int(body.get("idx", state["current_step_idx"])), total - 1))
         locked = bool(body.get("locked", True))
-        reset_pass_transition()
+        # locked=True(수동 제어)이거나 실제로 스텝이 바뀔 때만 pass transition 취소 및 AI 상태 초기화.
+        # locked=False + 동일 idx는 PASS 후 클라이언트가 AI auto 모드를 유지하는 신호이므로 건드리지 않음.
+        if locked or idx != state["current_step_idx"]:
+            reset_pass_transition()
+            state["ai_result"] = "WAIT"
+            state["ai_response"] = "대기 중..."
+            clear_vlm_timing()
         state["current_step_idx"] = idx
         state["step_locked"] = locked
-        state["ai_result"] = "WAIT"
-        state["ai_response"] = "대기 중..."
-        clear_vlm_timing()
         save_session()
         return {"status": "ok", "current_step_idx": idx}
 
@@ -223,11 +234,37 @@ def register_routes(app: FastAPI) -> None:
             traceback.print_exc()
             return {"status": "error", "message": f"trigger-vlm 예외: {type(e).__name__}: {str(e)}"}
 
+    @app.get("/tts")
+    async def text_to_speech(text: str, voice: str = "ko-KR-InJoonNeural"):
+        """edge-tts로 텍스트를 음성 스트림으로 변환 (실패 시 클라이언트가 Web Speech로 폴백)"""
+        if not _EDGE_TTS_OK:
+            return {"error": "edge-tts 미설치"}
+        if not text or not text.strip():
+            return {"error": "텍스트 없음"}
+        clean = re.sub(r'^\[\w+\]\s*', '', text.strip())
+        if not clean:
+            return {"error": "빈 텍스트"}
+        try:
+            communicate = edge_tts.Communicate(clean, voice)
+
+            async def audio_stream():
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        yield chunk["data"]
+
+            return StreamingResponse(
+                audio_stream(),
+                media_type="audio/mpeg",
+                headers={"Cache-Control": "no-cache"},
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
     @app.get("/")
     @app.get("/mobile")
     async def serve_ui():
-        if os.path.exists("index_.html"):
-            return FileResponse("index.html")
+        if os.path.exists("index2.html"):
+            return FileResponse("index2.html")
         if os.path.exists("index.html"):
             return FileResponse("index.html")
-        return {"error": "index.html not found"}
+        return {"error": "index2.html not found"}
