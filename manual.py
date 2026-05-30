@@ -91,15 +91,20 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             img.convert("RGB").save(buf, format="JPEG", quality=88)
             img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-        prompt = """당신은 조립 매뉴얼 디지털화 전문가입니다.
-이 이미지는 조립 매뉴얼의 한 페이지입니다.
-모든 STEP을 찾아 JSON으로 반환하세요.
-- step_number: STEP 번호(정수)
-- title: 이미지에 "STEP N" 레이블이 있으면 그대로. 없으면 반드시 "STEP N" 형식으로만 작성 (N=step_number). 이미지 내용 설명 절대 금지.
-- desc: 이미지 바로 아래 지시문을 한 글자도 빠짐없이 복사. 한국어 우선, 없으면 영문 그대로. 요약/해석 금지. 문장 내 줄바꿈 금지.
-- box_2d: 이미지 영역만 [ymin,xmin,ymax,xmax] 0~1000 스케일
-규칙: Teaching STEAM 로고/브랜드 무시. desc 없으면 제외.
-{"steps":[{"step_number":int,"title":"STEP N","desc":"원문","box_2d":[int,int,int,int]}]}"""
+        prompt = (
+            f"당신은 조립 매뉴얼 디지털화 전문가입니다.\n"
+            f"이 이미지는 조립 매뉴얼의 {page_num}번째 페이지입니다.\n\n"
+            "페이지에서 주요 조립 단계(MAIN STEP)를 모두 찾아 JSON으로 반환하세요.\n\n"
+            "[추출 규칙]\n"
+            "- step_number: 각 섹션을 구분하는 큰 숫자(섹션 상단/좌측에 단독 표시)만 추출. 정수.\n"
+            "- title: \"STEP N\" 형식으로만 작성(N=step_number). 이미지 내용 설명 절대 금지.\n"
+            "- desc: 텍스트 지시문이 있으면 원문 그대로 복사. 없으면(레고 등 그림 전용) 조립 동작을 한국어 1문장으로 설명. 줄바꿈 금지.\n"
+            "- box_2d: 해당 메인 STEP 전체 이미지 영역 [ymin,xmin,ymax,xmax] 0~1000 스케일\n\n"
+            "[무시할 것]\n"
+            "- 노란색/강조색 인셋 박스 안의 작은 번호(1, 2, 3…) — 부품 픽업 순서이며 메인 단계가 아님\n"
+            "- 로고, 브랜드, 표지, 저작권 문구\n\n"
+            '{"steps":[{"step_number":int,"title":"STEP N","desc":"설명","box_2d":[int,int,int,int]}]}'
+        )
 
         res = await client.post(
             GEMINI_URL,
@@ -117,9 +122,11 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
         with Image.open(page_img_path) as full_img:
             for s in raw_steps:
                 box = s.get("box_2d")
-                desc = s.get("desc", "").strip()
-                if not box or not desc:
+                if not box:
                     continue
+                desc = s.get("desc", "").strip()
+                if not desc:
+                    desc = f"STEP {s.get('step_number', '?')} 조립"
                 ymin, xmin, ymax, xmax = box
                 left = max(0, int(xmin * orig_w / 1000))
                 top = max(0, int(ymin * orig_h / 1000))
@@ -270,10 +277,16 @@ async def process_manual_files(files: List[UploadFile]):
                 page_imgs = sorted(glob.glob(os.path.join(pages_dir, "page-*.jpg")))
                 state["progress_step"] = "analyze"
                 results = await asyncio.gather(
-                    *[analyze_pdf_page(client, page_path, i + 1, job_dir) for i, page_path in enumerate(page_imgs)]
+                    *[analyze_pdf_page(client, p, i + 1, job_dir) for i, p in enumerate(page_imgs)]
                 )
-                for result in results:
-                    all_steps.extend(result)
+                # 페이지 순서대로 단조 증가 필터 적용:
+                # 같은 페이지 내 인셋 서브스텝 번호(이전 최댓값 이하)를 제거
+                last_step = 0
+                for page_steps in results:
+                    for step in sorted(page_steps, key=lambda s: s.get("step", 0)):
+                        if step.get("step", 0) > last_step:
+                            all_steps.append(step)
+                            last_step = step["step"]
             elif ext.endswith((".png", ".jpg", ".jpeg")):
                 all_steps.extend(await detect_and_crop_image(client, file_path, len(all_steps)))
 
