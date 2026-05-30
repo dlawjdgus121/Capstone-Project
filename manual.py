@@ -4,6 +4,7 @@ import glob
 import io
 import json
 import os
+import re
 import subprocess
 import time
 from typing import List
@@ -31,6 +32,31 @@ def get_elapsed_time() -> float:
     if state["progress_step"] not in ("upload", "done") and _analysis_start_time > 0:
         return round(time.time() - _analysis_start_time, 1)
     return state["analysis_time"]
+
+
+def _has_foreign_text(text: str) -> bool:
+    """영어 등 외국어 단어가 포함돼 있으면 True."""
+    return bool(re.search(r'[a-zA-Z]{3,}', text))
+
+
+async def _translate_to_korean(client: httpx.AsyncClient, text: str) -> str:
+    """외국어 텍스트를 한국어로 번역. 실패 시 원문 반환."""
+    try:
+        res = await client.post(
+            GEMINI_URL,
+            json={
+                "contents": [{"parts": [{"text": f"다음 텍스트를 한국어로 번역하세요. 번역문만 출력하고 다른 설명은 하지 마세요.\n\n{text}"}]}],
+                "generationConfig": {"temperature": 0.1},
+            },
+            timeout=15.0,
+        )
+        if res.status_code == 200:
+            translated = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if translated:
+                return translated
+    except Exception:
+        pass
+    return text
 
 
 def extract_gemini_steps(response_json: dict) -> list:
@@ -98,7 +124,7 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             "[추출 규칙]\n"
             "- step_number: 각 섹션을 구분하는 큰 숫자(섹션 상단/좌측에 단독 표시)만 추출. 정수.\n"
             "- title: \"STEP N\" 형식으로만 작성(N=step_number). 이미지 내용 설명 절대 금지.\n"
-            "- desc: 텍스트 지시문이 있으면 원문 그대로 복사. 없으면(레고 등 그림 전용) 조립 동작을 한국어 1문장으로 설명. 줄바꿈 금지.\n"
+            "- desc: 해당 STEP에 표시된 모든 텍스트(본문 + Note/주의사항 포함)를 한 글자도 빠짐없이 한국어로 번역. 요약·생략 절대 금지. 줄바꿈은 공백으로 대체. 텍스트가 전혀 없으면(레고 등 그림 전용) 조립 동작을 한국어로 설명.\n"
             "- box_2d: 해당 메인 STEP 전체 이미지 영역 [ymin,xmin,ymax,xmax] 0~1000 스케일\n\n"
             "[무시할 것]\n"
             "- 노란색/강조색 인셋 박스 안의 작은 번호(1, 2, 3…) — 부품 픽업 순서이며 메인 단계가 아님\n"
@@ -136,6 +162,8 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
                     continue
 
                 step_num = s.get("step_number", 0)
+                if _has_foreign_text(desc):
+                    desc = await _translate_to_korean(client, desc)
                 crop_path = os.path.join(job_dir, f"step_p{page_num}_{step_num}.jpg")
                 full_img.crop((left, top, right, bottom)).convert("RGB").save(crop_path, "JPEG", quality=92)
                 step_data = {
@@ -206,6 +234,8 @@ async def detect_and_crop_image(client, img_path, base_idx):
                 if right <= left or bottom <= top:
                     continue
                 step_num = s.get("step_number") or (base_idx + len(steps) + 1)
+                if _has_foreign_text(desc):
+                    desc = await _translate_to_korean(client, desc)
                 crop_path = os.path.join(job_dir, f"img_step_{step_num}_{int(time.time() * 1000)}.jpg")
                 full_img.crop((left, top, right, bottom)).convert("RGB").save(crop_path, "JPEG", quality=92)
                 steps.append(

@@ -67,11 +67,11 @@ Notes:
 - Dotted lines = fold lines, arrows = movement direction.
 - Do not penalize for camera angle, lighting, or small positional differences.
 
-Response format:
-- reason: 1 short sentence in Korean only. Max 30 characters. No English.
+Response format (CRITICAL — STRICTLY FOLLOW):
+- reason: 반드시 한국어로만 작성. 영어 절대 금지. 최대 30자. 지시문이 영어여도 한국어로 번역하여 작성.
 - result: PASS or FAIL only.
 
-Example: "접힌 형태가 확인됩니다." → PASS / "접기가 전혀 되지 않았습니다." → FAIL
+Example: "조립 형태가 확인됩니다." → PASS / "조립이 전혀 되지 않았습니다." → FAIL
 """
 
 
