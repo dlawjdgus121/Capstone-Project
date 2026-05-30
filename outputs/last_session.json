@@ -1,109 +1,109 @@
 {
-  "current_step_idx": 6,
+  "current_step_idx": 4,
   "manual_steps": [
     {
       "step": 1,
       "title": "1",
-      "desc": "정사각형 종이를 대각선 방향으로 반을 접어 삼각형 모양을 만듭니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_1_1779514138832.jpg"
+      "desc": "정사각형 종이를 대각선 방향으로 접어 접기선을 만듭니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_1_1780124775911.jpg"
     },
     {
       "step": 2,
       "title": "2",
-      "desc": "삼각형의 한쪽 모서리를 중심선에 맞추어 아래로 접습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_2_1779514138871.jpg"
+      "desc": "삼각형의 위쪽 한 귀퉁이를 중심을 향해 비스듬히 접습니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_2_1780124775965.jpg"
     },
     {
       "step": 3,
       "title": "3",
-      "desc": "반대쪽 모서리도 똑같이 중심선에 맞추어 아래로 접습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_3_1779514138872.jpg"
+      "desc": "방금 접었던 부분을 다시 펼칩니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_3_1780124775966.jpg"
     },
     {
       "step": 4,
       "title": "4",
-      "desc": "아래로 뾰족하게 나온 끝부분을 위로 접어 올립니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_4_1779514138872.jpg"
+      "desc": "반대쪽 귀퉁이도 중심을 향해 접었다가 펼쳐 접기선을 만듭니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_4_1780124775967.jpg"
     },
     {
       "step": 5,
       "title": "5",
-      "desc": "오른쪽 부분을 안쪽으로 접어 넣습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_5_1779514138873.jpg"
+      "desc": "좌우를 안으로 밀어 넣으며 주머니 모양으로 눌러 접습니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_5_1780124775968.jpg"
     },
     {
       "step": 6,
       "title": "6",
-      "desc": "왼쪽 부분을 안쪽으로 접어 넣습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_6_1779514138873.jpg"
+      "desc": "위로 솟아있는 삼각형 레이어를 아래로 접어 내립니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_6_1780124775969.jpg"
     },
     {
       "step": 7,
       "title": "7",
-      "desc": "접힌 부분의 틈을 벌려 주머니 모양을 만들며 눌러 접습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_7_1779514138875.jpg"
+      "desc": "오른쪽 레이어를 왼쪽으로 한 장 넘깁니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_7_1780124775971.jpg"
     },
     {
       "step": 8,
       "title": "8",
-      "desc": "아래쪽의 벌어진 틈을 잡고 위로 들어 올리며 길게 접습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_8_1779514138875.jpg"
+      "desc": "안쪽을 벌려서 마름모 모양이 되도록 눌러 접습니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_8_1780124775972.jpg"
     },
     {
       "step": 9,
       "title": "9",
-      "desc": "양옆을 안으로 모으면서 끝부분을 위로 길게 뽑아 접어 올립니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_9_1779514138876.jpg"
+      "desc": "아래쪽 끝을 위로 길게 들어 올리며 접어 다이아몬드 모양을 만듭니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_9_1780124775973.jpg"
     },
     {
       "step": 10,
       "title": "10",
-      "desc": "접힌 면을 고르게 정리하여 마름모 형태를 만듭니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_10_1779514138877.jpg"
+      "desc": "양쪽 옆의 모서리를 중앙선에 맞춰 안으로 접습니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_10_1780124775975.jpg"
     },
     {
       "step": 11,
       "title": "11",
-      "desc": "윗부분의 양쪽 날개를 가운데 중심선에 맞춰 좁게 접습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_11_1779514138878.jpg"
+      "desc": "위쪽 끝의 삼각형 부분을 아래로 접습니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_11_1780124775976.jpg"
     },
     {
       "step": 12,
       "title": "12",
-      "desc": "아래쪽의 두 날개를 바깥쪽 사선 방향으로 접어 다리를 만듭니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_12_1779514138879.jpg"
+      "desc": "아랫부분을 위로 한 번 접고, 다시 반을 아래로 접는 계단 접기를 합니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_12_1780124775981.jpg"
     },
     {
       "step": 13,
       "title": "13",
-      "desc": "위쪽의 두 날개도 바깥쪽 사선 방향으로 접어 앞발을 만듭니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_13_1779514138880.jpg"
+      "desc": "양옆의 길쭉한 부분을 바깥쪽 대각선 위로 접어 앞다리를 만듭니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_13_1780124775982.jpg"
     },
     {
       "step": 14,
       "title": "14",
-      "desc": "팔과 다리의 끝부분을 각각 바깥쪽으로 한 번 더 꺾어 접습니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_14_1779514138880.jpg"
+      "desc": "아래쪽의 두 날개를 바깥쪽으로 꺾어 뒷다리를 만듭니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_14_1780124775983.jpg"
     },
     {
       "step": 15,
       "title": "15",
-      "desc": "몸통의 아랫부분을 위로 접어 계단 접기를 시작합니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_15_1779514138881.jpg"
+      "desc": "네 다리의 끝부분을 각각 꺾어 발의 모양을 만듭니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_15_1780124775984.jpg"
     },
     {
       "step": 16,
       "title": "16",
-      "desc": "접힌 부분을 다시 아래로 꺾어 접어 입체적인 개구리 형태를 만듭니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_16_1779514138881.jpg"
+      "desc": "몸통 아랫부분을 계단 접기 하여 튀어오를 수 있는 구조를 만듭니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_16_1780124775985.jpg"
     },
     {
       "step": 17,
       "title": "17",
-      "desc": "완성된 개구리 모양입니다. 눈을 그려 넣어 마무리합니다.",
-      "image_url": "/outputs/sess_1779514110/img_step_17_1779514138883.jpg"
+      "desc": "눈을 그리고 뒤를 눌러 점프시킬 수 있는 완성된 개구리입니다.",
+      "image_url": "/outputs/sess_1780124749/img_step_17_1780124775989.jpg"
     }
   ],
-  "analysis_time": 28.52,
+  "analysis_time": 26.52,
   "step_locked": true
 }

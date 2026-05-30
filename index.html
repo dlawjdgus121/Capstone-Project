@@ -623,12 +623,12 @@ function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart }) {
     return (
         <div className="modal-back">
             <div style={{textAlign:'center', maxWidth:480, padding:32, animation:'step-in 0.4s ease-out'}}>
-                <div className="label" style={{marginBottom:18}}>● Session complete</div>
+                <div className="label" style={{marginBottom:18}}>● Complete</div>
                 <h2 style={{fontSize:64, fontWeight:300, lineHeight:1.05, letterSpacing:'-0.03em', margin:'0 0 8px'}}>
-                    조립 완료.
+                    완료!
                 </h2>
                 <p style={{color:'var(--ink-3)', fontSize:15, margin:'0 0 12px'}}>
-                    총 <span style={{color:'var(--ink)', fontWeight:600}}>{totalSteps}단계</span>를 모두 완료했습니다.
+                    총 <span style={{color:'var(--ink)', fontWeight:600}}>{totalSteps}단계</span>를 모두 마쳤습니다.
                 </p>
                 {elapsedSeconds > 0 && (
                     <p style={{color:'var(--ink-4)', fontSize:13, margin:'0 0 36px',
@@ -655,14 +655,12 @@ function UploadProgress({ status, onCancel }) {
     const fileInfo = status.file_info || { name:'', pages:0, steps:0 };
     const preview  = status.uploaded_preview || '';
 
-    // 프론트에서 직접 카운트 0.1초 단위
     const [localElapsed, setLocalElapsed] = React.useState(0);
     React.useEffect(() => {
         setLocalElapsed(0);
         const t = setInterval(() => setLocalElapsed(s => Math.round((s + 0.1) * 10) / 10), 100);
         return () => clearInterval(t);
     }, []);
-    const elapsed = localElapsed;
 
     const stepLabels = {
         upload:  '매뉴얼을 읽고 있어요…',
@@ -673,39 +671,35 @@ function UploadProgress({ status, onCancel }) {
     const curText = stepLabels[status.progress_step] || '시작 중…';
 
     return (
-        <div style={{width:'100%', maxWidth:780, display:'flex', flexDirection:'column', gap:12}}>
-
-            {/* 상단: 로봇 + 매뉴얼 미리보기 나란히 */}
-            <div style={{display:'flex', gap:12, alignItems:'stretch', height:300}}>
-
-                {/* 로봇 */}
-                <div style={{flex:'0 0 340px', borderRadius:14, overflow:'hidden',
-                             position:'relative', border:'1px solid var(--line)', background:'var(--bg-3)'}}>
-                    <iframe src="https://my.spline.design/r4xbot-VuIwjjOzjo7Adg9NZ7lsu25N/"
-                            frameBorder="0" style={{width:'100%', height:'100%', pointerEvents:'all'}}/>
-                    <div style={{position:'absolute', bottom:0, left:0, right:0, padding:'12px 16px',
-                                 background:'linear-gradient(to top, rgba(245,245,247,0.96) 55%, transparent)'}}>
-                        <p style={{margin:'0 0 1px', fontSize:14, fontWeight:400, color:'var(--ink)'}}>
-                            {curText}
-                        </p>
-                        <p className="mono" style={{margin:0, fontSize:10, color:'var(--ink-4)', letterSpacing:'0.08em'}}>
-                            {elapsed > 0 ? `${elapsed.toFixed(1)}s 경과` : '대기 중…'}
-                        </p>
-                    </div>
-                </div>
-
-                {/* 업로드된 매뉴얼 미리보기 */}
-                <div style={{flex:1, borderRadius:14, overflow:'hidden',
-                             border:'1px solid var(--line-2)', background:'var(--bg)',
-                             display:'flex', alignItems:'center', justifyContent:'center',
-                             position:'relative'}}>
-                    {preview ? (
-                        <>
-                            <img src={preview} alt="매뉴얼 미리보기"
+        <div style={{width:'100%', height:'100vh', background:'var(--bg)',
+                         display:'flex', flexDirection:'column',
+                         alignItems:'center', justifyContent:'center', gap:20}}>
+            <div style={{display:'contents'}}>
+                {/* 매뉴얼 미리보기 */}
+                <div style={{
+                    width:480, background:'rgba(255,255,255,0.92)',
+                    borderRadius:20, overflow:'hidden',
+                    border:'1px solid rgba(0,0,0,0.08)',
+                    boxShadow:'0 30px 60px rgba(0,0,0,0.18)',
+                    backdropFilter:'blur(20px)',
+                }}>
+                    {/* 미리보기 이미지 */}
+                    <div style={{height:320, display:'flex', alignItems:'center', justifyContent:'center',
+                                 background:'var(--bg)', position:'relative', overflow:'hidden'}}>
+                        {preview ? (
+                            <img src={preview} alt="매뉴얼"
                                  style={{width:'100%', height:'100%', objectFit:'contain'}}/>
-                            {/* 파일명 오버레이 */}
-                            <div style={{position:'absolute', bottom:0, left:0, right:0,
-                                         padding:'8px 12px',
+                        ) : (
+                            <div style={{textAlign:'center', color:'var(--ink-4)'}}>
+                                <div style={{fontSize:40, marginBottom:10}}>📄</div>
+                                <div className="mono" style={{fontSize:11, letterSpacing:'0.15em', textTransform:'uppercase'}}>
+                                    {fileInfo.name || 'loading…'}
+                                </div>
+                            </div>
+                        )}
+                        {/* 파일명 오버레이 */}
+                        {preview && fileInfo.name && (
+                            <div style={{position:'absolute', bottom:0, left:0, right:0, padding:'8px 14px',
                                          background:'linear-gradient(to top, rgba(245,245,247,0.95) 60%, transparent)'}}>
                                 <p className="mono" style={{margin:0, fontSize:10, color:'var(--ink-3)',
                                      letterSpacing:'0.08em', overflow:'hidden',
@@ -713,37 +707,29 @@ function UploadProgress({ status, onCancel }) {
                                     {fileInfo.name}
                                 </p>
                             </div>
-                        </>
-                    ) : (
-                        <div style={{textAlign:'center', color:'var(--ink-4)'}}>
-                            <div style={{fontSize:32, marginBottom:8}}>📄</div>
-                            <div className="mono" style={{fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase'}}>
-                                {fileInfo.name || 'loading…'}
-                            </div>
+                        )}
+                    </div>
+
+                    {/* 진행 상태 */}
+                    <div style={{padding:'18px 22px'}}>
+                        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10}}>
+                            <span style={{fontSize:14, fontWeight:500, color:'var(--ink)'}}>{curText}</span>
+                            <span className="mono" style={{fontSize:12, color:'var(--ink-4)'}}>
+                                {localElapsed > 0 ? `${localElapsed.toFixed(1)}s` : '—'}
+                            </span>
                         </div>
-                    )}
+                        <div style={{height:2, background:'var(--line-2)', borderRadius:999,
+                                     overflow:'hidden', position:'relative', marginBottom:14}}>
+                            <div style={{position:'absolute', inset:0,
+                                         background:'linear-gradient(90deg, transparent, var(--accent), transparent)',
+                                         animation:'wave-scan 2s ease-in-out infinite'}}/>
+                        </div>
+                        <button className="btn-quiet" onClick={onCancel} style={{width:'100%'}}>
+                            ✕ 취소하고 처음으로
+                        </button>
+                    </div>
                 </div>
             </div>
-
-            {/* 하단: 진행 바 + 취소 */}
-            <div className="surface" style={{padding:'14px 18px'}}>
-                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
-                    <span style={{fontSize:13, color:'var(--ink-2)'}}>{curText}</span>
-                    <span className="mono" style={{fontSize:11, color:'var(--ink-4)'}}>
-                        {elapsed > 0 ? `${elapsed.toFixed(1)}s` : '—'}
-                    </span>
-                </div>
-                <div style={{height:2, background:'var(--line-2)', borderRadius:999,
-                             overflow:'hidden', marginBottom:12, position:'relative'}}>
-                    <div style={{position:'absolute', inset:0,
-                                 background:'linear-gradient(90deg, transparent, var(--accent), transparent)',
-                                 animation:'wave-scan 2s ease-in-out infinite'}}/>
-                </div>
-                <button className="btn-quiet" onClick={onCancel} style={{width:'100%'}}>
-                    ✕ 취소하고 처음으로
-                </button>
-            </div>
-
             <style>{`@keyframes wave-scan { 0%{transform:translateX(-100%)} 100%{transform:translateX(200%)} }`}</style>
         </div>
     );
@@ -817,6 +803,7 @@ function PCView() {
     const rightDragRef                          = useRef(null);
     const pcVideoRef                            = useRef(null);
     const pcRoomRef                             = useRef(null);
+    const [isPortrait, setIsPortrait]           = useState(false); // 세로 영상 여부
     const [qrCodeUrl, setQrCodeUrl] = useState('');
     const [streamAlive, setStreamAlive] = useState(false);
     const [previewSteps, setPreviewSteps] = useState([]);  // 파싱 프리뷰
@@ -826,6 +813,30 @@ function PCView() {
     const prevAiResult = useRef('WAIT');
     const statusRef = useRef(status);
     const pingIntervalRef = useRef(null);
+
+    /* edge-tts 재생 함수 — 서버 /tts 엔드포인트 사용, 실패 시 Web Speech 폴백 */
+    const speakRef = useRef(null);  // 현재 재생 중인 Audio 객체
+    const speak = useCallback((text) => {
+        if (!text || !ttsOn) return;
+        // 이전 재생 중지
+        if (speakRef.current) { speakRef.current.pause(); speakRef.current = null; }
+        window.speechSynthesis.cancel();
+
+        const clean = text.replace(/^\[\w+\]\s*/, '').trim();
+        if (!clean) return;
+
+        // edge-tts 시도
+        const audio = new Audio('/tts?text=' + encodeURIComponent(clean));
+        speakRef.current = audio;
+        audio.play().catch(() => {
+            // 실패 시 Web Speech 폴백
+            const u = new SpeechSynthesisUtterance(clean);
+            u.lang = 'ko-KR'; u.rate = 1.05;
+            window.speechSynthesis.speak(u);
+        });
+    }, [ttsOn]);
+
+
     const inputRef = useRef(null);
     const listRef = useRef(null);
     const [hoveredStep, setHoveredStep] = useState(null);  // {idx, x, y, desc, step}
@@ -1116,25 +1127,20 @@ function PCView() {
         const text = status.ai_response;
         if (!text || text === prevAiResponse.current) return;
         prevAiResponse.current = text;
-        const clean = text.replace(/^\[\w+\]\s*/, '').trim();
-        if (!clean) return;
-        window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(clean);
-        u.lang='ko-KR'; u.rate=1.05;
-        window.speechSynthesis.speak(u);
-    }, [status.ai_response, status.has_frame, view, ttsOn]);
+        speak(text);
+    }, [status.ai_response, status.has_frame, view, ttsOn, speak]);
 
     /* TTS — step change */
     useEffect(() => {
         if (view !== 'coach' || !ttsOn || activeIdx === prevActiveIdx.current) return;
         prevActiveIdx.current = activeIdx;
-        const t = status.manual_steps[activeIdx]?.title || '';
-        const msg = t ? `${t} 시작합니다.` : `${activeIdx+1}단계 시작합니다.`;
-        window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(msg);
-        u.lang='ko-KR'; u.rate=1.05;
-        window.speechSynthesis.speak(u);
-    }, [activeIdx, view, ttsOn]);
+        const stepNum = activeIdx + 1;
+        const engNum = ['','one','two','three','four','five','six','seven','eight','nine','ten',
+                        'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen','twenty'];
+        const numWord = stepNum <= 20 ? engNum[stepNum] : stepNum;
+        const msg = `스텝 ${numWord} 시작합니다.`;
+        speak(msg);
+    }, [activeIdx, view, ttsOn, speak]);
 
     /* settings outside-click */
     useEffect(() => {
@@ -1165,12 +1171,7 @@ function PCView() {
             setTimeout(() => setFlashType(null), 900);
             const reason = (status.ai_response||'').replace(/^\[\w+\]\s*/,'').trim();
             setFailReason(reason); setShowFail(true);
-            if (ttsOn) {
-                window.speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(reason || '조립 오류가 감지되었습니다.');
-                u.lang='ko-KR'; u.rate=1.0;
-                window.speechSynthesis.speak(u);
-            }
+            if (ttsOn) speak(reason || '오류가 감지되었습니다.');
         }
     }, [status.ai_result, view, ttsOn]);
 
@@ -1276,8 +1277,8 @@ function PCView() {
             {/* UPLOAD */}
             {view === 'upload' && (
                 <div style={{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:24, position:'relative'}}>
-                    <button className="btn-quiet" onClick={goHome} style={{position:'absolute', top:24, left:24}}>← 뒤로가기</button>
-                    <div className="landing-tag" style={{top:24, right:24, left:'auto'}}>step · 01</div>
+                    <button className="btn-quiet" onClick={goHome} style={{position:'absolute', top:24, left:24, zIndex:10}}>← 뒤로가기</button>
+                    <div className="landing-tag" style={{top:24, right:24, left:'auto', zIndex:10}}>step · 01</div>
                     {uploadError && !uploading && (
                             <div style={{
                                 width:'100%', maxWidth:560, marginBottom:16,
@@ -1296,28 +1297,32 @@ function PCView() {
                         )}
                     {uploading
                         ? <UploadProgress status={status} onCancel={goHome}/>
-                        /* previewSteps가 쌓이면 파일 선택 화면에도 표시 */
                         : (
-                            <div className="surface" style={{width:'100%', maxWidth:560, padding:'48px 44px'}}>
-                                <div className="label" style={{marginBottom:14}}>● 매뉴얼 입력</div>
-                                <h2 style={{fontSize:40, fontWeight:300, letterSpacing:'-0.025em', lineHeight:1.05, margin:'0 0 12px'}}>매뉴얼 분석</h2>
-                                <p style={{color:'var(--ink-3)', fontSize:14, lineHeight:1.55, margin:'0 0 32px', maxWidth:380}}>
-                                    AI가 페이지 단위로 이미지와 지시문을 정밀 추출합니다. PDF 또는 이미지를 업로드하세요.
-                                </p>
-                                <div className="dropzone" data-drag={isDragging}
-                                     onClick={() => inputRef.current.click()}
-                                     onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
-                                    <div className="dz-icon">
-                                        <Icon s={20}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>
+                            <div style={{display:'flex', alignItems:'center', justifyContent:'center',
+                                         width:'100%', height:'100vh', background:'var(--bg)'}}>
+                                <div className="surface" style={{width:'100%', maxWidth:560, padding:'48px 44px'}}>
+                                    <div className="label" style={{marginBottom:14}}>● 매뉴얼 입력</div>
+                                    <h2 style={{fontSize:40, fontWeight:300, letterSpacing:'-0.025em', lineHeight:1.05, margin:'0 0 12px'}}>
+                                        매뉴얼 분석
+                                    </h2>
+                                    <p style={{color:'var(--ink-3)', fontSize:14, lineHeight:1.55, margin:'0 0 32px', maxWidth:380}}>
+                                        AI가 페이지 단위로 이미지와 지시문을 정밀 추출합니다. PDF 또는 이미지를 업로드하세요.
+                                    </p>
+                                    <div className="dropzone" data-drag={isDragging}
+                                         onClick={() => inputRef.current.click()}
+                                         onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+                                        <div className="dz-icon">
+                                            <Icon s={20}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>
+                                        </div>
+                                        <p style={{margin:'0 0 6px', fontSize:15, fontWeight:500, color:'var(--ink)'}}>
+                                            {isDragging ? '여기에 놓으세요' : '클릭하거나 파일을 드래그'}
+                                        </p>
+                                        <p className="mono" style={{margin:0, fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.16em', textTransform:'uppercase'}}>
+                                            PDF · PNG · JPG
+                                        </p>
                                     </div>
-                                    <p style={{margin:'0 0 6px', fontSize:15, fontWeight:500, color:'var(--ink)'}}>
-                                        {isDragging ? '여기에 놓으세요' : '클릭하거나 파일을 드래그'}
-                                    </p>
-                                    <p className="mono" style={{margin:0, fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.16em', textTransform:'uppercase'}}>
-                                        PDF · PNG · JPG
-                                    </p>
+                                    <input type="file" multiple ref={inputRef} onChange={onUpload} style={{display:'none'}} accept=".pdf,image/*"/>
                                 </div>
-                                <input type="file" multiple ref={inputRef} onChange={onUpload} style={{display:'none'}} accept=".pdf,image/*"/>
                             </div>
                         )
                     }
@@ -1326,7 +1331,7 @@ function PCView() {
 
             {/* COACH */}
             {view === 'coach' && (
-                <div style={{display:'flex', gap:16, height:'100vh', padding:16, maxWidth:1700, margin:'0 auto'}}>
+                <div style={{display:'flex', gap:16, height:'100vh', padding:16, width:'100%', boxSizing:'border-box', overflow:'hidden'}}>
 
                     {/* LEFT */}
                     {/* 사이드바 열기 버튼 — 닫혔을 때만 */}
@@ -1462,11 +1467,24 @@ function PCView() {
 
                     {/* CENTER */}
                     <main style={{flex:1, display:'flex', flexDirection:'column', minWidth:0}}>
-                        <div className="stream-frame" style={{flex:1, display:'flex', flexDirection:'column'}}>
-                            <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center'}}>
+                        <div className="stream-frame" style={{flex:1, display:'flex', flexDirection:'column', overflow:'hidden'}}>
+                            <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', minHeight:0}}>
                                 <video ref={pcVideoRef} autoPlay playsInline muted
-                                       style={{width:'100%', height:'100%', objectFit:'cover',
-                                               display: streamAlive ? 'block' : 'none'}}/>
+                                       onLoadedMetadata={e => {
+                                           const v = e.target;
+                                           const portrait = v.videoHeight > v.videoWidth;
+                                           console.log(`영상 크기: ${v.videoWidth}x${v.videoHeight} → ${portrait ? '세로':'가로'}`);
+                                           setIsPortrait(portrait);
+                                       }}
+                                       onResize={e => {
+                                           const v = e.target;
+                                           setIsPortrait(v.videoHeight > v.videoWidth);
+                                       }}
+                                       style={{
+                                           width:'100%', height:'100%',
+                                           objectFit: isPortrait ? 'contain' : 'cover',
+                                           background:'#000',
+                                           display: streamAlive ? 'block' : 'none'}}/>
                                 {!streamAlive && (
                                     /* ── QR 코드 표시 (미연결 시) ── */
                                     <div style={{textAlign:'center', color:'#666', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%'}}>
@@ -1510,8 +1528,8 @@ function PCView() {
                                     </div>
                                 )}
                             </div>
-                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'22px 24px',
-                                         display:'flex', alignItems:'flex-start', gap:18, minHeight:140}}>
+                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'14px 20px',
+                                         display:'flex', alignItems:'flex-start', gap:18, minHeight:100, flexShrink:0}}>
                                 <div style={{flex:1, minWidth:0}}>
                                     <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
                                         <span className={`stat-dot ${

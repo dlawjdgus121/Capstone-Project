@@ -23,6 +23,12 @@ from PIL import Image
 from dotenv import load_dotenv
 
 from livekit import rtc
+try:
+    import edge_tts
+    EDGE_TTS_OK = True
+except ImportError:
+    EDGE_TTS_OK = False
+    print("⚠️ edge-tts 없음 — pip install edge-tts")
 
 load_dotenv()
 
@@ -525,6 +531,29 @@ async def run_livekit():
 async def ping_check(body: dict):
     """클라이언트 RTT 측정용"""
     return {"pong": True, "client_time": body.get("client_time", 0)}
+
+@app.get("/tts")
+async def text_to_speech(text: str, voice: str = "ko-KR-InJoonNeural"):
+    """edge-tts로 텍스트를 음성으로 변환해 스트리밍"""
+    if not EDGE_TTS_OK:
+        return {"error": "edge-tts 미설치"}
+    if not text or not text.strip():
+        return {"error": "텍스트 없음"}
+    # [PASS]/[FAIL] 태그 제거
+    import re
+    clean = re.sub(r'^\[\w+\]\s*', '', text.strip())
+    if not clean:
+        return {"error": "빈 텍스트"}
+    try:
+        communicate = edge_tts.Communicate(clean, voice)
+        async def audio_stream():
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    yield chunk["data"]
+        return StreamingResponse(audio_stream(), media_type="audio/mpeg",
+                                 headers={"Cache-Control": "no-cache"})
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/preview-steps")
 async def preview_steps():
