@@ -150,12 +150,6 @@
             position: relative;
             overflow: hidden;
         }
-        .camera-crop-video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            object-position: center center;
-        }
 
         .stat-dot {
             display: inline-block; width: 6px; height: 6px; border-radius: 50%;
@@ -164,7 +158,6 @@
         .stat-dot.live { background: var(--good); animation: live-pulse 1.8s infinite; }
         .stat-dot.warn { background: var(--warn); animation: live-pulse 1.4s infinite; }
         .stat-dot.bad  { background: var(--bad);  animation: live-pulse 0.9s infinite; }
-        .timing-chips > span:nth-of-type(n+5) { display: none; }
         @keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
         .pdot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
@@ -251,6 +244,21 @@
         }
         .sidebar-toggle:hover { background: var(--bg); color: var(--ink); }
 
+        /* 스텝 툴팁 — CSS로는 fixed 불가, JS로 처리 */
+        .step-tooltip-box {
+            position: fixed;
+            background: var(--ink); color: var(--bg-2);
+            padding: 8px 12px; border-radius: 8px;
+            font-size: 12px; font-weight: 500; line-height: 1.5;
+            max-width: 240px; pointer-events: none; z-index: 9999;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            transition: opacity 0.15s ease;
+        }
+        .step-tooltip-box::before {
+            content: ''; position: absolute; right: 100%; top: 14px;
+            border: 5px solid transparent; border-right-color: var(--ink);
+        }
+
         /* 전체 화면 플래시 — PASS/FAIL 피드백 */
         @keyframes flash-pass {
             0%   { opacity:0; }
@@ -325,8 +333,8 @@
             font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-3);
         }
 
-        @keyframes step-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
-        .step-in { animation: step-in 0.22s ease-out; }
+        @keyframes step-in { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+        .step-in { animation: step-in 0.35s cubic-bezier(0.4,0,0.2,1); }
 
         .landing-tag {
             position: absolute; top: 24px; left: 28px;
@@ -418,14 +426,22 @@ function MobileView() {
                 await room.connect(livekitUrl, mobileToken);
 
                 const tracks = await LK.createLocalTracks({
-                    video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:720}, frameRate:30 }
+                    video: {
+                        facingMode: 'environment',
+                        width:  { ideal: 1280 },
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 30, min: 24 },
+                    }
                 });
                 const videoTrack = tracks.find(t => t.kind === 'video');
                 if (videoRef.current && videoTrack) videoTrack.attach(videoRef.current);
                 await room.localParticipant.publishTrack(videoTrack, {
-                    simulcast: false,
-                    videoEncoding: { maxBitrate: 3_000_000 },
-                    priority: 'high'
+                    simulcast: false,          // 단일 품질 고정
+                    dynacast:  false,          // 자동 품질 조절 비활성화
+                    videoEncoding: {
+                        maxBitrate:    4_000_000,  // 최대 4Mbps
+                        maxFramerate:  30,
+                    },
                 });
                 setConnected(true);
 
@@ -603,17 +619,26 @@ function HelpModal({ onClose }) {
     );
 }
 
-function CompletionOverlay({ totalSteps, onRestart }) {
+function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart }) {
     return (
         <div className="modal-back">
             <div style={{textAlign:'center', maxWidth:480, padding:32, animation:'step-in 0.4s ease-out'}}>
-                <div className="label" style={{marginBottom:18}}>● Session complete</div>
+                <div className="label" style={{marginBottom:18}}>● Complete</div>
                 <h2 style={{fontSize:64, fontWeight:300, lineHeight:1.05, letterSpacing:'-0.03em', margin:'0 0 8px'}}>
-                    조립 완료.
+                    완료!
                 </h2>
-                <p style={{color:'var(--ink-3)', fontSize:15, margin:'0 0 36px'}}>
-                    총 <span style={{color:'var(--ink)', fontWeight:600}}>{totalSteps}단계</span>를 모두 완료했습니다.
+                <p style={{color:'var(--ink-3)', fontSize:15, margin:'0 0 12px'}}>
+                    총 <span style={{color:'var(--ink)', fontWeight:600}}>{totalSteps}단계</span>를 모두 마쳤습니다.
                 </p>
+                {elapsedSeconds > 0 && (
+                    <p style={{color:'var(--ink-4)', fontSize:13, margin:'0 0 36px',
+                               fontFamily:'var(--font-mono)', letterSpacing:'0.05em'}}>
+                        소요 시간&nbsp;
+                        {Math.floor(elapsedSeconds/60) > 0 ? `${Math.floor(elapsedSeconds/60)}분 ` : ''}
+                        {elapsedSeconds%60}초
+                    </p>
+                )}
+                {!(elapsedSeconds > 0) && <div style={{marginBottom:36}}/>}
                 <div style={{display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap'}}>
                     <button className="btn-quiet" onClick={onRestart}>← 처음으로</button>
                     <button className="btn-spline" onClick={async () => {
@@ -630,14 +655,12 @@ function UploadProgress({ status, onCancel }) {
     const fileInfo = status.file_info || { name:'', pages:0, steps:0 };
     const preview  = status.uploaded_preview || '';
 
-    // 프론트에서 직접 카운트 0.1초 단위
     const [localElapsed, setLocalElapsed] = React.useState(0);
     React.useEffect(() => {
         setLocalElapsed(0);
         const t = setInterval(() => setLocalElapsed(s => Math.round((s + 0.1) * 10) / 10), 100);
         return () => clearInterval(t);
     }, []);
-    const elapsed = localElapsed;
 
     const stepLabels = {
         upload:  '매뉴얼을 읽고 있어요…',
@@ -648,39 +671,35 @@ function UploadProgress({ status, onCancel }) {
     const curText = stepLabels[status.progress_step] || '시작 중…';
 
     return (
-        <div style={{width:'100%', maxWidth:780, display:'flex', flexDirection:'column', gap:12}}>
-
-            {/* 상단: 로봇 + 매뉴얼 미리보기 나란히 */}
-            <div style={{display:'flex', gap:12, alignItems:'stretch', height:300}}>
-
-                {/* 로봇 */}
-                <div style={{flex:'0 0 340px', borderRadius:14, overflow:'hidden',
-                             position:'relative', border:'1px solid var(--line)', background:'var(--bg-3)'}}>
-                    <iframe src="https://my.spline.design/r4xbot-VuIwjjOzjo7Adg9NZ7lsu25N/"
-                            frameBorder="0" style={{width:'100%', height:'100%', pointerEvents:'all'}}/>
-                    <div style={{position:'absolute', bottom:0, left:0, right:0, padding:'12px 16px',
-                                 background:'linear-gradient(to top, rgba(245,245,247,0.96) 55%, transparent)'}}>
-                        <p style={{margin:'0 0 1px', fontSize:14, fontWeight:400, color:'var(--ink)'}}>
-                            {curText}
-                        </p>
-                        <p className="mono" style={{margin:0, fontSize:10, color:'var(--ink-4)', letterSpacing:'0.08em'}}>
-                            {elapsed > 0 ? `${elapsed.toFixed(1)}s 경과` : '대기 중…'}
-                        </p>
-                    </div>
-                </div>
-
-                {/* 업로드된 매뉴얼 미리보기 */}
-                <div style={{flex:1, borderRadius:14, overflow:'hidden',
-                             border:'1px solid var(--line-2)', background:'var(--bg)',
-                             display:'flex', alignItems:'center', justifyContent:'center',
-                             position:'relative'}}>
-                    {preview ? (
-                        <>
-                            <img src={preview} alt="매뉴얼 미리보기"
+        <div style={{width:'100%', height:'100vh', background:'var(--bg)',
+                         display:'flex', flexDirection:'column',
+                         alignItems:'center', justifyContent:'center', gap:20}}>
+            <div style={{display:'contents'}}>
+                {/* 매뉴얼 미리보기 */}
+                <div style={{
+                    width:480, background:'rgba(255,255,255,0.92)',
+                    borderRadius:20, overflow:'hidden',
+                    border:'1px solid rgba(0,0,0,0.08)',
+                    boxShadow:'0 30px 60px rgba(0,0,0,0.18)',
+                    backdropFilter:'blur(20px)',
+                }}>
+                    {/* 미리보기 이미지 */}
+                    <div style={{height:320, display:'flex', alignItems:'center', justifyContent:'center',
+                                 background:'var(--bg)', position:'relative', overflow:'hidden'}}>
+                        {preview ? (
+                            <img src={preview} alt="매뉴얼"
                                  style={{width:'100%', height:'100%', objectFit:'contain'}}/>
-                            {/* 파일명 오버레이 */}
-                            <div style={{position:'absolute', bottom:0, left:0, right:0,
-                                         padding:'8px 12px',
+                        ) : (
+                            <div style={{textAlign:'center', color:'var(--ink-4)'}}>
+                                <div style={{fontSize:40, marginBottom:10}}>📄</div>
+                                <div className="mono" style={{fontSize:11, letterSpacing:'0.15em', textTransform:'uppercase'}}>
+                                    {fileInfo.name || 'loading…'}
+                                </div>
+                            </div>
+                        )}
+                        {/* 파일명 오버레이 */}
+                        {preview && fileInfo.name && (
+                            <div style={{position:'absolute', bottom:0, left:0, right:0, padding:'8px 14px',
                                          background:'linear-gradient(to top, rgba(245,245,247,0.95) 60%, transparent)'}}>
                                 <p className="mono" style={{margin:0, fontSize:10, color:'var(--ink-3)',
                                      letterSpacing:'0.08em', overflow:'hidden',
@@ -688,43 +707,35 @@ function UploadProgress({ status, onCancel }) {
                                     {fileInfo.name}
                                 </p>
                             </div>
-                        </>
-                    ) : (
-                        <div style={{textAlign:'center', color:'var(--ink-4)'}}>
-                            <div style={{fontSize:32, marginBottom:8}}>📄</div>
-                            <div className="mono" style={{fontSize:10, letterSpacing:'0.15em', textTransform:'uppercase'}}>
-                                {fileInfo.name || 'loading…'}
-                            </div>
+                        )}
+                    </div>
+
+                    {/* 진행 상태 */}
+                    <div style={{padding:'18px 22px'}}>
+                        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10}}>
+                            <span style={{fontSize:14, fontWeight:500, color:'var(--ink)'}}>{curText}</span>
+                            <span className="mono" style={{fontSize:12, color:'var(--ink-4)'}}>
+                                {localElapsed > 0 ? `${localElapsed.toFixed(1)}s` : '—'}
+                            </span>
                         </div>
-                    )}
+                        <div style={{height:2, background:'var(--line-2)', borderRadius:999,
+                                     overflow:'hidden', position:'relative', marginBottom:14}}>
+                            <div style={{position:'absolute', inset:0,
+                                         background:'linear-gradient(90deg, transparent, var(--accent), transparent)',
+                                         animation:'wave-scan 2s ease-in-out infinite'}}/>
+                        </div>
+                        <button className="btn-quiet" onClick={onCancel} style={{width:'100%'}}>
+                            ✕ 취소하고 처음으로
+                        </button>
+                    </div>
                 </div>
             </div>
-
-            {/* 하단: 진행 바 + 취소 */}
-            <div className="surface" style={{padding:'14px 18px'}}>
-                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
-                    <span style={{fontSize:13, color:'var(--ink-2)'}}>{curText}</span>
-                    <span className="mono" style={{fontSize:11, color:'var(--ink-4)'}}>
-                        {elapsed > 0 ? `${elapsed.toFixed(1)}s` : '—'}
-                    </span>
-                </div>
-                <div style={{height:2, background:'var(--line-2)', borderRadius:999,
-                             overflow:'hidden', marginBottom:12, position:'relative'}}>
-                    <div style={{position:'absolute', inset:0,
-                                 background:'linear-gradient(90deg, transparent, var(--accent), transparent)',
-                                 animation:'wave-scan 2s ease-in-out infinite'}}/>
-                </div>
-                <button className="btn-quiet" onClick={onCancel} style={{width:'100%'}}>
-                    ✕ 취소하고 처음으로
-                </button>
-            </div>
-
             <style>{`@keyframes wave-scan { 0%{transform:translateX(-100%)} 100%{transform:translateX(200%)} }`}</style>
         </div>
     );
 }
 
-function PingIndicator({ rtt, fps, streamLevel, streamSize }) {
+function PingIndicator({ rtt, fps, streamLevel }) {
     const cls   = rtt === null ? '' : rtt <= 50 ? 'live' : rtt <= 150 ? 'warn' : 'bad';
     const label = rtt === null ? '—' : `${rtt}ms`;
     const lvls  = {0:'240p',1:'360p',2:'540p',3:'720p'};
@@ -739,10 +750,6 @@ function PingIndicator({ rtt, fps, streamLevel, streamSize }) {
             </>}
             <span style={{color:'var(--ink-4)'}}>·</span>
             <span style={{color:'var(--ink-3)'}}>{lvls[lvl]}</span>
-            {streamSize && <>
-                <span style={{color:'var(--ink-4)'}}>·</span>
-                <span style={{color:'var(--ink-3)'}}>{streamSize}</span>
-            </>}
         </div>
     );
 }
@@ -760,69 +767,28 @@ function PCView() {
     const params = new URLSearchParams(window.location.search);
     const demoStart = params.get('demo');
     const isDemo = !!demoStart;
-    const pcVideoRef = useRef(null);
-    const pcRoomRef = useRef(null);
+
     const [view, setView] = useState(demoStart || 'landing');
     const [status, setStatus] = useState(isDemo ? {
         ai_response: '왼쪽 모서리를 조금 더 안쪽으로 접어주세요.',
-        manual_steps: DEMO_STEPS,
-        current_step_idx: 1,
-        has_frame: false,
-        analysis_time: 26,
-        is_analyzed: true,
-        step_locked: false,
-        progress_step: 'analyze',
-        ai_result: 'WAIT',
-        current_fps: 0,
-        stream_level: 2,
-
-        // VLM timing
-        vlm_latency_ms: 0,
-        vlm_inference_ms: 0,
-        vlm_proxy_ms: 0,
-        vlm_total_s: 0,
-        vlm_image_send_ms: 0,
-        vlm_result_recv_ms: 0,
-        vlm_e2e_ms: 0,
-        vlm_camera_kb: 0,
-        recv_frame_size: '',
-        stream_frame_size: '',
-        vlm_frame_size: '',
-        hand_frame_size: '',
-        stream_camera_kb: 0,
+        manual_steps: DEMO_STEPS, current_step_idx: 1, has_frame: false,
+        analysis_time: 26, is_analyzed: true, step_locked: false, progress_step: 'analyze',
+        ai_result: 'WAIT', current_fps: 0, stream_level: 2,
     } : {
-        ai_response:'대기 중.',
-        manual_steps:[],
-        current_step_idx:0,
-        has_frame:false,
-        analysis_time:0,
-        is_analyzed:false,
-        step_locked:false,
-        progress_step:'upload',
-        ai_result:'WAIT',
-        current_fps:0,
-        stream_level:2,
-
-        // VLM timing
-        vlm_latency_ms: 0,
-        vlm_inference_ms: 0,
-        vlm_proxy_ms: 0,
-        vlm_total_s: 0,
-        vlm_image_send_ms: 0,
-        vlm_result_recv_ms: 0,
-        vlm_e2e_ms: 0,
-        vlm_camera_kb: 0,
-        recv_frame_size: '',
-        stream_frame_size: '',
-        vlm_frame_size: '',
-        hand_frame_size: '',
-        stream_camera_kb: 0,
+        ai_response:'대기 중...', manual_steps:[], current_step_idx:0, has_frame:false,
+        analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload',
+        ai_result:'WAIT', current_fps:0, stream_level:2,
     });
     const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState('');  // 업로드 에러 메시지
     const [userSelectedIdx, setUserSelectedIdx] = useState(null);
     const [flashKey, setFlashKey] = useState(0);
     const [modalImg, setModalImg] = useState(null);
     const [showComplete, setShowComplete] = useState(false);
+    const [completeTime, setCompleteTime]   = useState(null);  // 완료 소요 시간(초)
+    const coachStartTime                        = useRef(null);    // 카메라 첫 연결 시각
+    const [liveElapsed, setLiveElapsed]         = useState(0);     // 조립 중 실시간 경과 시간(초)
+    const liveElapsedRef                            = useRef(0);       // 클로저 안에서 최신값 참조용
     const [isDragging, setIsDragging] = useState(false);
     const [ttsOn, setTtsOn] = useState(true);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -835,6 +801,9 @@ function PCView() {
     const [sidebarOpen, setSidebarOpen] = useState(true);  // 왼쪽 사이드바 열림/닫힘
     const [rightWidth, setRightWidth]       = useState(340);   // 오른쪽 패널 너비 (드래그 조절)
     const rightDragRef                          = useRef(null);
+    const pcVideoRef                            = useRef(null);
+    const pcRoomRef                             = useRef(null);
+    const [isPortrait, setIsPortrait]           = useState(false); // 세로 영상 여부
     const [qrCodeUrl, setQrCodeUrl] = useState('');
     const [streamAlive, setStreamAlive] = useState(false);
     const [previewSteps, setPreviewSteps] = useState([]);  // 파싱 프리뷰
@@ -844,8 +813,34 @@ function PCView() {
     const prevAiResult = useRef('WAIT');
     const statusRef = useRef(status);
     const pingIntervalRef = useRef(null);
+
+    /* edge-tts 재생 함수 — 서버 /tts 엔드포인트 사용, 실패 시 Web Speech 폴백 */
+    const speakRef = useRef(null);  // 현재 재생 중인 Audio 객체
+    const speak = useCallback((text) => {
+        if (!text || !ttsOn) return;
+        // 이전 재생 중지
+        if (speakRef.current) { speakRef.current.pause(); speakRef.current = null; }
+        window.speechSynthesis.cancel();
+
+        const clean = text.replace(/^\[\w+\]\s*/, '').trim();
+        if (!clean) return;
+
+        // edge-tts 시도
+        const audio = new Audio('/tts?text=' + encodeURIComponent(clean));
+        speakRef.current = audio;
+        audio.play().catch(() => {
+            // 실패 시 Web Speech 폴백
+            const u = new SpeechSynthesisUtterance(clean);
+            u.lang = 'ko-KR'; u.rate = 1.05;
+            window.speechSynthesis.speak(u);
+        });
+    }, [ttsOn]);
+
+
     const inputRef = useRef(null);
     const listRef = useRef(null);
+    const [hoveredStep, setHoveredStep] = useState(null);  // {idx, x, y, desc, step}
+    const [passedSteps, setPassedSteps]     = useState(new Set());  // PASS된 step idx
     const stepRefs = useRef([]);
     const prevAiResponse = useRef('');
     const prevActiveIdx = useRef(0);
@@ -853,140 +848,158 @@ function PCView() {
     const [isNewStart, setIsNewStart] = React.useState(false);
 
     /* QR 코드 생성 — view가 바뀔 때마다 재실행해서 터널 URL 반영 */
-   /* QR 코드 생성 — view가 바뀔 때마다 재실행해서 터널 URL 반영 */
-useEffect(() => {
-    if (view !== 'coach') return;
+    useEffect(() => {
+        if (view !== 'coach') return;  // 코치 화면일 때만 갱신
+        const generateQR = (mobileUrl) => {
+            try {
+                const qr = qrcode(0, 'L');
+                qr.addData(mobileUrl);
+                qr.make();
+                setQrCodeUrl(qr.createDataURL(4, 1));
+                return mobileUrl;
+            } catch(e) { console.error('QR 생성 실패:', e); return null; }
+        };
 
-    const generateQR = (mobileUrl) => {
-        try {
-            const qr = qrcode(0, 'L');
-            qr.addData(mobileUrl);
-            qr.make();
-            setQrCodeUrl(qr.createDataURL(4, 1));
-            return mobileUrl;
-        } catch(e) {
-            console.error('QR 생성 실패:', e);
-            return null;
-        }
-    };
-
-    const tryGenerate = async () => {
-        try {
-            const cfg = await fetch('/config', {cache: 'no-store'}).then(r => r.json());
-            if (cfg.mobile_url) {
-                const url = cfg.mobile_url.replace(/[/]$/, '') + '/mobile';
-                generateQR(url);
-                return true;
-            } else {
+        const tryGenerate = async () => {
+            try {
+                const cfg = await fetch('/config', {cache: 'no-store'}).then(r => r.json());
+                if (cfg.mobile_url) {
+                    const url = cfg.mobile_url.replace(/[/]$/,  '') + '/mobile';
+                    generateQR(url);
+                    return true;  // 터널 URL 확정 — 갱신 중단
+                } else {
+                    const base = window.location.protocol + '//' + window.location.host;
+                    generateQR(base + '/mobile');
+                    return false;  // 아직 터널 URL 없음 — 계속 재시도
+                }
+            } catch(e) {
                 const base = window.location.protocol + '//' + window.location.host;
                 generateQR(base + '/mobile');
                 return false;
             }
-        } catch(e) {
-            const base = window.location.protocol + '//' + window.location.host;
-            generateQR(base + '/mobile');
-            return false;
-        }
-    };
+        };
 
-    tryGenerate().then(done => {
-        if (!done) {
-            let attempts = 0;
-            const interval = setInterval(async () => {
-                attempts++;
-                const done = await tryGenerate();
-                if (done || attempts >= 10) clearInterval(interval);
-            }, 3000);
-        }
-    });
-}, [view]);
-
-useEffect(() => {
-    if (view !== 'coach' || isDemo) return;
-
-    const LK = window.LivekitClient;
-    if (!LK) {
-        console.error('LiveKit client가 로드되지 않았습니다.');
-        return;
-    }
-
-    let cancelled = false;
-
-    const room = new LK.Room({
-        adaptiveStream: true,
-        dynacast: true,
-    });
-
-    pcRoomRef.current = room;
-
-    const attachVideo = (track) => {
-        if (!track || track.kind !== 'video') return;
-        if (!pcVideoRef.current) return;
-
-        track.attach(pcVideoRef.current);
-        setStreamAlive(true);
-    };
-
-    room.on('trackSubscribed', (track) => {
-        attachVideo(track);
-    });
-
-    room.on('trackUnsubscribed', (track) => {
-        try {
-            track.detach();
-        } catch (e) {}
-        setStreamAlive(false);
-    });
-
-    room.on('disconnected', () => {
-        setStreamAlive(false);
-    });
-
-    const connectPC = async () => {
-        try {
-            const cfg = await fetch('/config', { cache: 'no-store' }).then(r => r.json());
-
-            if (!cfg.pc_token) {
-                alert('PC_TOKEN이 서버 .env 또는 /config에 설정되지 않았습니다.');
-                return;
+        // 즉시 1회 실행
+        tryGenerate().then(done => {
+            if (!done) {
+                // 터널 URL 없으면 3초마다 재시도 (최대 30초)
+                let attempts = 0;
+                const interval = setInterval(async () => {
+                    attempts++;
+                    const done = await tryGenerate();
+                    if (done || attempts >= 10) clearInterval(interval);
+                }, 3000);
             }
+        });
+    }, [view]);  // view 바뀔 때마다 재실행
 
-            await room.connect(cfg.livekit_url, cfg.pc_token, {
-                autoSubscribe: true,
-            });
+    /* PC 브라우저 → LiveKit 직접 수신 */
+    useEffect(() => {
+        if (view !== 'coach' || isDemo) return;
+        const LK = window.LivekitClient;
+        if (!LK) return;
+        let cancelled = false;
+        const room = new LK.Room({ adaptiveStream: false, dynacast: false });
+        pcRoomRef.current = room;
 
-            if (cancelled) return;
+        const attachVideo = (track) => {
+            if (!track || track.kind !== 'video' || !pcVideoRef.current) return;
+            track.attach(pcVideoRef.current);
+            setStreamAlive(true);
+        };
 
-            room.remoteParticipants.forEach((participant) => {
-                participant.trackPublications.forEach((pub) => {
-                    if (pub.track && pub.track.kind === 'video') {
-                        attachVideo(pub.track);
-                    }
-                });
-            });
-        } catch (e) {
-            console.error('PC LiveKit 연결 오류:', e);
+        room.on('trackSubscribed', attachVideo);
+        room.on('trackUnsubscribed', () => setStreamAlive(false));
+        room.on('disconnected', () => setStreamAlive(false));
+
+
+        fetch('/config', { cache:'no-store' }).then(r => r.json()).then(cfg => {
+            if (!cfg.pc_token) { console.warn('PC_TOKEN 없음 — LiveKit 미사용'); return; }
+            room.connect(cfg.livekit_url, cfg.pc_token, { autoSubscribe: true }).then(() => {
+                if (cancelled) return;
+                room.remoteParticipants.forEach(p =>
+                    p.trackPublications.forEach(pub => {
+                        if (pub.track?.kind === 'video') attachVideo(pub.track);
+                    })
+                );
+            }).catch(e => console.error('PC LiveKit 오류:', e));
+        });
+
+        return () => {
+            cancelled = true;
             setStreamAlive(false);
+            try { room.disconnect(); } catch(e) {}
+            pcRoomRef.current = null;
+        };
+    }, [view, isDemo]);
+
+
+    /* 비디오 해상도 폴링 — 500ms마다 videoWidth/Height로 portrait 감지 */
+    useEffect(() => {
+        if (view !== 'coach' || !streamAlive) return;
+        const id = setInterval(() => {
+            const v = pcVideoRef.current;
+            if (v && v.videoWidth > 0 && v.videoHeight > 0) {
+                setIsPortrait(v.videoHeight > v.videoWidth);
+            }
+        }, 500);
+        return () => clearInterval(id);
+    }, [view, streamAlive]);
+
+    /* 조립 시간 측정 — 카메라 첫 연결 시 시작 */
+    useEffect(() => {
+        if (view !== 'coach') {
+            coachStartTime.current = null;  // 홈 돌아가면 초기화
+            setLiveElapsed(0);
+            liveElapsedRef.current = 0;
         }
-    };
+    }, [view]);
 
-    connectPC();
+    useEffect(() => {
+        if (view !== 'coach') return;
+        // 카메라 연결될 때마다 시작 시각 재설정 (첫 연결 시)
+        if (status.has_frame && !coachStartTime.current) {
+            coachStartTime.current = Date.now();
+            setLiveElapsed(0);
+            liveElapsedRef.current = 0;
+        }
+        // 카메라 끊기면 카운터 일시 정지 (시작 시각 유지)
+        if (!status.has_frame) {
+            setLiveElapsed(liveElapsedRef.current);  // 마지막 값 유지
+        }
+    }, [status.has_frame, view]);
 
-    return () => {
-        cancelled = true;
-        setStreamAlive(false);
-        try {
-            room.disconnect();
-        } catch (e) {}
-        pcRoomRef.current = null;
-    };
-}, [view, isDemo]);
+    useEffect(() => {
+        if (view !== 'coach' || !status.has_frame) return;  // 카메라 연결 시에만 카운트
+        const t = setInterval(() => {
+            if (coachStartTime.current) {
+                const elapsed = Math.floor((Date.now() - coachStartTime.current) / 1000);
+                liveElapsedRef.current = elapsed;
+                setLiveElapsed(elapsed);
+            }
+        }, 1000);
+        return () => clearInterval(t);
+    }, [view, status.has_frame]);
 
     /* 카메라 연결 끊김 감지 → streamAlive 갱신 + QR 재생성 */
     const prevHasFrame = useRef(false);
+    const streamAliveTimer = useRef(null);
     useEffect(() => {
         if (view !== 'coach') return;
-        if (!status.has_frame) setStreamAlive(false);
+        // has_frame이 false로 바뀌면 1초 후에 streamAlive 끔 (순간 깜빡임 방지)
+        if (!status.has_frame) {
+            if (!streamAliveTimer.current) {
+                streamAliveTimer.current = setTimeout(() => {
+                    setStreamAlive(false);
+                    streamAliveTimer.current = null;
+                }, 1000);
+            }
+        } else {
+            if (streamAliveTimer.current) {
+                clearTimeout(streamAliveTimer.current);
+                streamAliveTimer.current = null;
+            }
+        }
         // 연결됐다가 끊긴 경우 (true → false)
         if (prevHasFrame.current && !status.has_frame) {
             fetch('/config', {cache: 'no-store'})
@@ -1020,10 +1033,7 @@ useEffect(() => {
                 const newSteps = JSON.parse(e.data);
                 setPreviewSteps(prev => {
                     const urls = new Set(prev.map(s => s.image_url));
-                    return [
-    ...prev,
-    ...newSteps.filter(s => !urls.has(s.image_url))
-];
+                    return [...prev, ...newSteps.filter(s => !urls.has(s.image_url))];
                 });
             } catch(err) { console.error('SSE 파싱 오류:', err); }
         };
@@ -1032,45 +1042,28 @@ useEffect(() => {
     }, [view, uploading]);
 
     useEffect(() => {
-    if (isDemo) return;
-
-    const t = setInterval(async () => {
-        try {
-            const res = await fetch('/status');
-            const data = await res.json();
-
-            setStatus(data);
-            statusRef.current = data;
-
-            if (
-                data.is_analyzed &&
-                data.manual_steps?.length > 0 &&
-                view === 'upload' &&
-                !uploading &&
-                !isNewStart
-            ) {
-                setView('coach');
-            }
-        } catch (e) {
-            console.error('status polling error:', e);
-        }
-    }, 1000);
-
-    return () => clearInterval(t);
-}, [view, uploading, isNewStart, isDemo]);
+        if (isDemo) return;
+        const t = setInterval(async () => {
+            try {
+                const res = await fetch('/status');
+                const data = await res.json();
+                setStatus(data);
+                statusRef.current = data;
+                setStreamAlive(!!data.has_frame); // 스트림 표시 여부 동기화
+                if (data.is_analyzed && data.manual_steps?.length > 0 && view === 'upload' && !uploading && !isNewStart) {
+                    setView('coach');
+                }
+            } catch(e){}
+        }, 1000);
+        return () => clearInterval(t);
+    }, [view, uploading, isNewStart]);
 
     const uploadFiles = useCallback(async (files) => {
         if (!files || !files.length) return;
         // UI 먼저 전환 (reset은 백그라운드)
         setIsNewStart(false);
-setStatus(prev => ({
-    ...prev,
-    analysis_time: 0,
-    elapsed_time: 0,
-    progress_step: 'upload',
-    is_analyzed: false,
-    manual_steps: []
-}));
+        setStatus(prev => ({...prev, analysis_time:0, elapsed_time:0, progress_step:'upload', is_analyzed:false, manual_steps:[]}));
+        setUploadError('');
         setPreviewSteps([]);
         setUploading(true);
         setView('upload');
@@ -1079,9 +1072,22 @@ setStatus(prev => ({
         for (let f of files) fd.append('files', f);
         try {
             const res = await fetch('/process-manual', { method:'POST', body:fd });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `서버 오류 (${res.status})`);
+            }
             const data = await res.json();
-            if (data.status === 'success') setUploading(false);
-        } catch(e) { setUploading(false); setView('landing'); }
+            if (data.status === 'success') {
+                setUploadError('');
+                setUploading(false);
+            } else {
+                throw new Error(data.message || '분석 실패');
+            }
+        } catch(e) {
+            setUploading(false);
+            setUploadError(e.message || '알 수 없는 오류가 발생했습니다.');
+            setView('upload');  // 에러 시 upload 화면 유지
+        }
     }, []);
 
     const onUpload = e => uploadFiles(e.target.files);
@@ -1092,27 +1098,6 @@ setStatus(prev => ({
     const totalSteps = status.manual_steps?.length || 0;
     const activeIdx = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
     const currentStep = totalSteps > 0 ? status.manual_steps[activeIdx] : null;
-
-    const msToSecLabel = (ms) => {
-        const n = Number(ms || 0);
-        return n > 0 ? (n / 1000).toFixed(2) : '-';
-    };
-    const vlmImageSendSec = msToSecLabel(status?.vlm_image_send_ms);
-    const vlmInferenceSec = msToSecLabel(status?.vlm_inference_ms ?? status?.vlm_latency_ms);
-    const vlmResultRecvSec = msToSecLabel(status?.vlm_result_recv_ms);
-    const vlmE2ESec = status?.vlm_e2e_ms
-        ? msToSecLabel(status.vlm_e2e_ms)
-        : status?.vlm_total_s
-            ? Number(status.vlm_total_s).toFixed(2)
-            : '-';
-
-    const recvFrameLabel = status?.recv_frame_size || '-';
-    const streamFrameLabel = status?.stream_frame_size || '-';
-    const vlmFrameLabel = status?.vlm_frame_size || '-';
-    const handFrameLabel = status?.hand_frame_size || '-';
-    const vlmCameraKb = status?.vlm_camera_kb
-        ? Number(status.vlm_camera_kb).toFixed(1)
-        : '-';
 
     useEffect(() => {
         if (view !== 'coach') return;
@@ -1139,7 +1124,10 @@ setStatus(prev => ({
 
     const goToNext = useCallback(() => {
         const cur = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
-        if (cur >= totalSteps-1) setShowComplete(true);
+        if (cur >= totalSteps-1) {
+                setCompleteTime(liveElapsedRef.current > 0 ? liveElapsedRef.current : liveElapsed > 0 ? liveElapsed : 1);
+                setShowComplete(true);
+            }
         else forceSetStep(cur+1);
     }, [userSelectedIdx, status.current_step_idx, totalSteps, forceSetStep]);
 
@@ -1147,36 +1135,12 @@ setStatus(prev => ({
         if (isAnalyzing || !status.has_frame) return;
         setIsAnalyzing(true);
         try {
-        const res = await fetch('/trigger-vlm', { method:'POST' });
-        const text = await res.text();
-
-        let data = null;
-        try {
-            data = text ? JSON.parse(text) : {};
-        } catch (parseErr) {
-            console.error('[trigger-vlm] JSON parse failed:', parseErr, text);
-            alert(`서버 응답 파싱 실패 (${res.status})`);
-            return;
-        }
-
-        console.log('[trigger-vlm]', res.status, data);
-
-        if (!res.ok) {
-            alert(data.message || `서버 오류: HTTP ${res.status}`);
-            return;
-        }
-
-        if (data.status !== 'success') {
-            alert(data.message || 'VLM 분석 실패');
-            return;
-        }
-    } catch(e) {
-        console.error('[trigger-vlm] fetch failed:', e);
-        alert(`서버 연결 오류: ${e.message || e}`);
-    } finally {
-        setIsAnalyzing(false);
-    }
-}, [isAnalyzing, status.has_frame]);
+            const res = await fetch('/trigger-vlm', { method:'POST' });
+            const data = await res.json();
+            if (data.status !== 'success') alert(data.message || 'VLM 분석 실패');
+        } catch(e) { alert('서버 오류'); }
+        finally { setIsAnalyzing(false); }
+    }, [isAnalyzing, status.has_frame]);
 
     const goHome = useCallback(async () => {
         cancelCountdown();
@@ -1190,25 +1154,20 @@ setStatus(prev => ({
         const text = status.ai_response;
         if (!text || text === prevAiResponse.current) return;
         prevAiResponse.current = text;
-        const clean = text.replace(/^\[\w+\]\s*/, '').trim();
-        if (!clean) return;
-        window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(clean);
-        u.lang='ko-KR'; u.rate=1.05;
-        window.speechSynthesis.speak(u);
-    }, [status.ai_response, status.has_frame, view, ttsOn]);
+        speak(text);
+    }, [status.ai_response, status.has_frame, view, ttsOn, speak]);
 
     /* TTS — step change */
     useEffect(() => {
         if (view !== 'coach' || !ttsOn || activeIdx === prevActiveIdx.current) return;
         prevActiveIdx.current = activeIdx;
-        const t = status.manual_steps[activeIdx]?.title || '';
-        const msg = t ? `${t} 시작합니다.` : `${activeIdx+1}단계 시작합니다.`;
-        window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(msg);
-        u.lang='ko-KR'; u.rate=1.05;
-        window.speechSynthesis.speak(u);
-    }, [activeIdx, view, ttsOn]);
+        const stepNum = activeIdx + 1;
+        const engNum = ['','one','two','three','four','five','six','seven','eight','nine','ten',
+                        'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen','twenty'];
+        const numWord = stepNum <= 20 ? engNum[stepNum] : stepNum;
+        const msg = `스텝 ${numWord} 시작합니다.`;
+        speak(msg);
+    }, [activeIdx, view, ttsOn, speak]);
 
     /* settings outside-click */
     useEffect(() => {
@@ -1229,22 +1188,17 @@ setStatus(prev => ({
             setFlashType('pass');
             setTimeout(() => setFlashType(null), 900);
             setPassToast(true);
-            setUserSelectedIdx(null);
-            setFlashKey(k=>k+1);
-            const holdMs = Math.max(500, Math.ceil((status.pass_hold_remaining_s ?? 3) * 1000));
-            passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, holdMs);
+            const latestIdx = statusRef.current.current_step_idx;
+            setUserSelectedIdx(null); setFlashKey(k=>k+1);
+            fetch('/set-step', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({idx:latestIdx, locked:false}) }).catch(()=>{});
+            passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, 1800);
         } else if (r === 'FAIL') {
             if (passTimerRef.current) { clearTimeout(passTimerRef.current); passTimerRef.current=null; setPassToast(false); }
             setFlashType('fail');
             setTimeout(() => setFlashType(null), 900);
             const reason = (status.ai_response||'').replace(/^\[\w+\]\s*/,'').trim();
             setFailReason(reason); setShowFail(true);
-            if (ttsOn) {
-                window.speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(reason || '조립 오류가 감지되었습니다.');
-                u.lang='ko-KR'; u.rate=1.0;
-                window.speechSynthesis.speak(u);
-            }
+            if (ttsOn) speak(reason || '오류가 감지되었습니다.');
         }
     }, [status.ai_result, view, ttsOn]);
 
@@ -1283,13 +1237,28 @@ setStatus(prev => ({
             {/* 전체 화면 플래시 — PASS/FAIL 시각적 피드백 */}
             {flashType && <div className={`flash-overlay ${flashType}`}/>}
 
-            {showComplete && <CompletionOverlay totalSteps={totalSteps} onRestart={() => { setShowComplete(false); forceSetStep(0); }}/> }
+            {/* 스텝 툴팁 — fixed 위치로 overflow 영향 없음 */}
+            {hoveredStep && (
+                <div className="step-tooltip-box" style={{
+                    left: hoveredStep.x, top: hoveredStep.y - 30,
+                    opacity: 1,
+                }}>
+                    <div style={{fontFamily:'var(--font-mono)', fontSize:10,
+                                 letterSpacing:'0.1em', opacity:0.6, marginBottom:4}}>
+                        STEP {String(hoveredStep.step).padStart(2,'0')}
+                    </div>
+                    {hoveredStep.desc ? hoveredStep.desc.slice(0,80) + (hoveredStep.desc.length > 80 ? '…' : '') : '—'}
+                </div>
+            )}
+
+            {showComplete && <CompletionOverlay totalSteps={totalSteps} elapsedSeconds={completeTime} onRestart={() => { setShowComplete(false); forceSetStep(0); }}/> }
             {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
             {modalImg && <ImageModal src={modalImg.src} title={modalImg.title} onClose={() => setModalImg(null)}/>}
             {passToast && (
                 <div className="toast">
                     <span style={{display:'inline-block', width:6, height:6, borderRadius:'50%', background:'var(--good)'}}/>
-                    {status.pending_step_idx !== null ? 'PASS · 3초 후 다음 단계로 이동합니다' : 'PASS'}
+                    PASS · 다음 단계로 이동합니다
+                    <button onClick={cancelCountdown} style={{background:'transparent', color:'var(--bg)', border:'none', opacity:0.6, cursor:'pointer', fontFamily:'var(--font-mono)', fontSize:11}}>취소</button>
                 </div>
             )}
 
@@ -1310,10 +1279,18 @@ setStatus(prev => ({
                         <button className="btn-spline" style={{minWidth:240}} onClick={() => { setIsNewStart(true); setView('upload'); }}>
                             Get Started
                         </button>
-                        <button className="btn-spline ghost" style={{minWidth:240}}
-                                onClick={() => { setIsNewStart(false); setView(status.is_analyzed && status.manual_steps?.length>0 ? 'coach' : 'upload'); }}>
-                            Continue →
-                        </button>
+                        <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:4}}>
+                            <button className="btn-spline ghost" style={{minWidth:240}}
+                                    onClick={() => { setIsNewStart(false); setView(status.is_analyzed && status.manual_steps?.length>0 ? 'coach' : 'upload'); }}>
+                                Continue →
+                            </button>
+                            {status.is_analyzed && status.manual_steps?.length>0 && (
+                                <span style={{fontSize:11, color:'rgba(255,255,255,0.75)',
+                                              fontFamily:'var(--font-mono)', letterSpacing:'0.1em'}}>
+                                    STEP {status.current_step_idx+1} / {status.manual_steps.length} 이어서 진행
+                                </span>
+                            )}
+                        </div>
                     </div>
                     {status.is_analyzed && status.manual_steps?.length>0 && (
                         <div className="session-pill">
@@ -1327,32 +1304,52 @@ setStatus(prev => ({
             {/* UPLOAD */}
             {view === 'upload' && (
                 <div style={{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:24, position:'relative'}}>
-                    <button className="btn-quiet" onClick={goHome} style={{position:'absolute', top:24, left:24}}>← 뒤로가기</button>
-                    <div className="landing-tag" style={{top:24, right:24, left:'auto'}}>step · 01</div>
+                    <button className="btn-quiet" onClick={goHome} style={{position:'absolute', top:24, left:24, zIndex:10}}>← 뒤로가기</button>
+                    <div className="landing-tag" style={{top:24, right:24, left:'auto', zIndex:10}}>step · 01</div>
+                    {uploadError && !uploading && (
+                            <div style={{
+                                width:'100%', maxWidth:560, marginBottom:16,
+                                padding:'14px 18px', borderRadius:12,
+                                background:'#fdf2f1', border:'1px solid rgba(179,38,30,0.2)',
+                                display:'flex', alignItems:'flex-start', gap:12,
+                            }}>
+                                <span style={{color:'var(--bad)', fontSize:16, flexShrink:0}}>⚠️</span>
+                                <div style={{flex:1}}>
+                                    <p style={{margin:'0 0 4px', fontSize:13, fontWeight:600, color:'var(--bad)'}}>매뉴얼 분석 실패</p>
+                                    <p style={{margin:0, fontSize:12, color:'var(--ink-2)', lineHeight:1.5}}>{uploadError}</p>
+                                </div>
+                                <button onClick={() => setUploadError('')}
+                                        style={{background:'transparent', border:'none', cursor:'pointer', color:'var(--ink-4)', fontSize:14}}>✕</button>
+                            </div>
+                        )}
                     {uploading
                         ? <UploadProgress status={status} onCancel={goHome}/>
-                        /* previewSteps가 쌓이면 파일 선택 화면에도 표시 */
                         : (
-                            <div className="surface" style={{width:'100%', maxWidth:560, padding:'48px 44px'}}>
-                                <div className="label" style={{marginBottom:14}}>● 매뉴얼 입력</div>
-                                <h2 style={{fontSize:40, fontWeight:300, letterSpacing:'-0.025em', lineHeight:1.05, margin:'0 0 12px'}}>매뉴얼 분석</h2>
-                                <p style={{color:'var(--ink-3)', fontSize:14, lineHeight:1.55, margin:'0 0 32px', maxWidth:380}}>
-                                    AI가 페이지 단위로 이미지와 지시문을 정밀 추출합니다. PDF 또는 이미지를 업로드하세요.
-                                </p>
-                                <div className="dropzone" data-drag={isDragging}
-                                     onClick={() => inputRef.current.click()}
-                                     onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
-                                    <div className="dz-icon">
-                                        <Icon s={20}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>
+                            <div style={{display:'flex', alignItems:'center', justifyContent:'center',
+                                         width:'100%', height:'100vh', background:'var(--bg)'}}>
+                                <div className="surface" style={{width:'100%', maxWidth:560, padding:'48px 44px'}}>
+                                    <div className="label" style={{marginBottom:14}}>● 매뉴얼 입력</div>
+                                    <h2 style={{fontSize:40, fontWeight:300, letterSpacing:'-0.025em', lineHeight:1.05, margin:'0 0 12px'}}>
+                                        매뉴얼 분석
+                                    </h2>
+                                    <p style={{color:'var(--ink-3)', fontSize:14, lineHeight:1.55, margin:'0 0 32px', maxWidth:380}}>
+                                        AI가 페이지 단위로 이미지와 지시문을 정밀 추출합니다. PDF 또는 이미지를 업로드하세요.
+                                    </p>
+                                    <div className="dropzone" data-drag={isDragging}
+                                         onClick={() => inputRef.current.click()}
+                                         onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+                                        <div className="dz-icon">
+                                            <Icon s={20}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>
+                                        </div>
+                                        <p style={{margin:'0 0 6px', fontSize:15, fontWeight:500, color:'var(--ink)'}}>
+                                            {isDragging ? '여기에 놓으세요' : '클릭하거나 파일을 드래그'}
+                                        </p>
+                                        <p className="mono" style={{margin:0, fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.16em', textTransform:'uppercase'}}>
+                                            PDF · PNG · JPG
+                                        </p>
                                     </div>
-                                    <p style={{margin:'0 0 6px', fontSize:15, fontWeight:500, color:'var(--ink)'}}>
-                                        {isDragging ? '여기에 놓으세요' : '클릭하거나 파일을 드래그'}
-                                    </p>
-                                    <p className="mono" style={{margin:0, fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.16em', textTransform:'uppercase'}}>
-                                        PDF · PNG · JPG
-                                    </p>
+                                    <input type="file" multiple ref={inputRef} onChange={onUpload} style={{display:'none'}} accept=".pdf,image/*"/>
                                 </div>
-                                <input type="file" multiple ref={inputRef} onChange={onUpload} style={{display:'none'}} accept=".pdf,image/*"/>
                             </div>
                         )
                     }
@@ -1361,7 +1358,7 @@ setStatus(prev => ({
 
             {/* COACH */}
             {view === 'coach' && (
-                <div style={{display:'flex', gap:16, height:'100vh', padding:16, maxWidth:1700, margin:'0 auto'}}>
+                <div style={{display:'flex', gap:16, height:'100vh', padding:16, width:'100%', boxSizing:'border-box', overflow:'hidden'}}>
 
                     {/* LEFT */}
                     {/* 사이드바 열기 버튼 — 닫혔을 때만 */}
@@ -1417,21 +1414,31 @@ setStatus(prev => ({
                                     <div key={i} ref={el => stepRefs.current[i]=el} className="step-row"
                                          data-active={i===activeIdx} data-aifocus={i===status.current_step_idx}
                                          onClick={() => forceSetStep(i)}
-                                         style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'22px 18px 22px 22px'}}>
+                                         style={{display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                 padding:'22px 18px 22px 22px', position:'relative'}}
+                                         onMouseEnter={e => {
+                                             const r = e.currentTarget.getBoundingClientRect();
+                                             setHoveredStep({idx:i, x:r.right+12, y:r.top + r.height/2, desc:s.desc, step:s.step});
+                                         }}
+                                         onMouseLeave={() => setHoveredStep(null)}>
                                         <span className="mono" style={{
                                             fontSize: i===activeIdx ? 17 : 14,
                                             fontWeight: i===activeIdx ? 600 : 400,
                                             letterSpacing:'0.06em',
-                                            color: i===activeIdx ? 'var(--ink)' : 'var(--ink-3)',
+                                            color: passedSteps.has(i) ? 'var(--good)' :
+                                                   i===activeIdx ? 'var(--ink)' : 'var(--ink-3)',
                                             transition:'all 0.2s'
                                         }}>
                                             {String(s.step).padStart(2,'0')}
                                         </span>
-                                        {i===status.current_step_idx && (
+                                        {passedSteps.has(i) ? (
+                                            <span style={{fontSize:12, color:'var(--good)', fontWeight:600, flexShrink:0}}>✓</span>
+                                        ) : i===status.current_step_idx ? (
                                             <span style={{width:6, height:6, borderRadius:'50%',
                                                           background:'var(--accent)', flexShrink:0,
                                                           boxShadow:'0 0 0 3px rgba(0,113,227,0.18)'}}/>
-                                        )}
+                                        ) : null}
+
                                     </div>
                                 )) : (
                                     [1,2,3,4,5,6].map(i => (
@@ -1444,209 +1451,103 @@ setStatus(prev => ({
                             </div>
                         </div>
                         <div style={{display:'flex', gap:8, position:'relative'}}>
-    {/* 버튼 순서: Home → Settings → ? */}
-    <button className="btn-quiet" onClick={goHome} style={{flex:1}}>
-        <Icon s={13}>
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-            <polyline points="9 22 9 12 15 12 15 22"/>
-        </Icon>
-        Home
-    </button>
-
-    <div style={{flex:1, position:'relative'}}>
-        <button
-            className="btn-quiet"
-            onClick={e => {
-                e.stopPropagation();
-                setSettingsOpen(v => !v);
-            }}
-            style={{
-                width:'100%',
-                borderColor: settingsOpen ? 'var(--ink)' : 'var(--line)',
-                color: settingsOpen ? 'var(--ink)' : 'var(--ink-2)'
-            }}
-        >
-            <Icon s={13}>
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </Icon>
-            Settings
-        </button>
-
-        {settingsOpen && (
-            <div className="settings-pop" onClick={e => e.stopPropagation()}>
-                <div style={{padding:12}}>
-                    <div className="label" style={{padding:'4px 8px 8px'}}>
-                        Preferences
-                    </div>
-
-                    <button
-                        onClick={() => {
-                            setTtsOn(v => !v);
-                            window.speechSynthesis.cancel();
-                        }}
-                        style={{
-                            width:'100%',
-                            display:'flex',
-                            alignItems:'center',
-                            justifyContent:'space-between',
-                            padding:'10px 8px',
-                            background:'transparent',
-                            border:'none',
-                            cursor:'pointer',
-                            borderRadius:2,
-                            transition:'background 0.15s'
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                    >
-                        <div style={{textAlign:'left'}}>
-                            <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>
-                                음성 안내
+                            {/* 버튼 순서: Home → Settings → ? */}
+                            <button className="btn-quiet" onClick={goHome} style={{flex:1}}>
+                                <Icon s={13}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></Icon>
+                                Home
+                            </button>
+                            <div style={{flex:1, position:'relative'}}>
+                                <button className="btn-quiet"
+                                        onClick={e => { e.stopPropagation(); setSettingsOpen(v=>!v); }}
+                                        style={{width:'100%', borderColor: settingsOpen?'var(--ink)':'var(--line)', color: settingsOpen?'var(--ink)':'var(--ink-2)'}}>
+                                    <Icon s={13}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>
+                                    Settings
+                                </button>
+                                {settingsOpen && (
+                                    <div className="settings-pop" onClick={e=>e.stopPropagation()}>
+                                        <div style={{padding:12}}>
+                                            <div className="label" style={{padding:'4px 8px 8px'}}>Preferences</div>
+                                            <button onClick={() => { setTtsOn(v=>!v); window.speechSynthesis.cancel(); }}
+                                                    style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                            padding:'10px 8px', background:'transparent', border:'none',
+                                                            cursor:'pointer', borderRadius:2, transition:'background 0.15s'}}
+                                                    onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
+                                                    onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                                                <div style={{textAlign:'left'}}>
+                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>음성 안내</div>
+                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:2}}>TTS · Korean</div>
+                                                </div>
+                                                <div className="toggle" data-on={ttsOn}/>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                            <div className="mono" style={{
-                                fontSize:10,
-                                color:'var(--ink-4)',
-                                letterSpacing:'0.1em',
-                                marginTop:2
-                            }}>
-                                TTS · Korean
-                            </div>
+                            <button className="btn-quiet" onClick={() => setShowHelp(true)}
+                                    title="리니어 슬라이드 사용법"
+                                    style={{width:42, flexShrink:0, padding:'11px 0',
+                                            fontFamily:'var(--font-mono)', fontWeight:600, fontSize:14}}>
+                                ?
+                            </button>
                         </div>
+                                        </aside>
 
-                        <div className="toggle" data-on={ttsOn}/>
-                    </button>
-                </div>
-            </div>
-        )}
-    </div>
-
-    <button
-        className="btn-quiet"
-        onClick={() => setShowHelp(true)}
-        title="리니어 슬라이드 사용법"
-        style={{
-            width:42,
-            flexShrink:0,
-            padding:'11px 0',
-            fontFamily:'var(--font-mono)',
-            fontWeight:600,
-            fontSize:14
-        }}
-    >
-        ?
-    </button>
-</div>
-</aside>
                     {/* CENTER */}
                     <main style={{flex:1, display:'flex', flexDirection:'column', minWidth:0}}>
-                        <div className="stream-frame" style={{flex:1, display:'flex', flexDirection:'column'}}>
-                            <div style={{
-    flex:1,
-    position:'relative',
-    display:'flex',
-    alignItems:'center',
-    justifyContent:'center'
-}}>
-    <video
-    ref={pcVideoRef}
-    autoPlay
-    playsInline
-    muted
-    className="camera-crop-video"
-    style={{
-        display: streamAlive ? 'block' : 'none',
-
-        // 좌우반전
-        transform: 'scaleX(-1)',
-        transformOrigin: 'center',
-    }}
-/>
-
-    {!streamAlive && (
-        <div style={{
-            textAlign:'center',
-            color:'#666',
-            display:'flex',
-            flexDirection:'column',
-            alignItems:'center',
-            justifyContent:'center',
-            height:'100%',
-            width:'100%'
-        }}>
-            {qrCodeUrl ? (
-                <>
-                    <div style={{
-                        background:'white',
-                        padding:14,
-                        borderRadius:12,
-                        boxShadow:'0 0 40px rgba(255,255,255,0.1)',
-                        marginBottom:18
-                    }}>
-                        <img
-                            src={qrCodeUrl}
-                            style={{width:180, height:180, display:'block'}}
-                            alt="Mobile QR"
-                        />
-                    </div>
-
-                    <div className="mono" style={{
-                        fontSize:11,
-                        letterSpacing:'0.22em',
-                        textTransform:'uppercase',
-                        color:'#888',
-                        marginBottom:10
-                    }}>
-                        Scan to Connect
-                    </div>
-
-                    <div style={{
-                        display:'inline-block',
-                        padding:'8px 16px',
-                        border:'1px solid #2a2a2a',
-                        borderRadius:2
-                    }}>
-                        <code className="mono" style={{fontSize:11, color:'#aaa'}}>
-                            {window.location.host}/mobile
-                        </code>
-                    </div>
-                </>
-            ) : (
-                <>
-                    <div style={{
-                        width:48,
-                        height:48,
-                        border:'1.5px solid #333',
-                        borderTopColor:'#fff',
-                        borderRadius:'50%',
-                        animation:'spin 1.1s linear infinite',
-                        margin:'0 auto 20px'
-                    }}/>
-
-                    <div className="mono" style={{
-                        fontSize:11,
-                        letterSpacing:'0.32em',
-                        textTransform:'uppercase',
-                        color:'#888'
-                    }}>
-                        Awaiting Stream
-                    </div>
-                </>
-            )}
-        </div>
-    )}
-
-    <div style={{position:'absolute', top:14, left:14}}>
-        <PingIndicator
-            rtt={rtt}
-            fps={status.current_fps}
-            streamLevel={status.stream_level}
-            streamSize={status.stream_frame_size}
-        />
-    </div>
-</div>
-                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'22px 24px',
-                                         display:'flex', alignItems:'flex-start', gap:18, minHeight:140}}>
+                        <div className="stream-frame" style={{flex:1, display:'flex', flexDirection:'column', overflow:'hidden'}}>
+                            <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', minHeight:0}}>
+                                <video ref={pcVideoRef} autoPlay playsInline muted
+                                       style={{
+                                           width:'100%', height:'100%',
+                                           objectFit: isPortrait ? 'contain' : 'cover',
+                                           background:'#000',
+                                           display: streamAlive ? 'block' : 'none',
+                                       }}/>
+                                {!streamAlive && (
+                                    /* ── QR 코드 표시 (미연결 시) ── */
+                                    <div style={{textAlign:'center', color:'#666', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%'}}>
+                                        {qrCodeUrl ? (
+                                            <>
+                                                <div style={{background:'white', padding:14, borderRadius:12,
+                                                             boxShadow:'0 0 40px rgba(255,255,255,0.1)', marginBottom:18}}>
+                                                    <img src={qrCodeUrl} style={{width:180, height:180, display:'block'}} alt="Mobile QR"/>
+                                                </div>
+                                                <div className="mono" style={{fontSize:11, letterSpacing:'0.22em', textTransform:'uppercase', color:'#888', marginBottom:10}}>
+                                                    Scan to Connect
+                                                </div>
+                                                <div style={{display:'inline-block', padding:'8px 16px', border:'1px solid #2a2a2a', borderRadius:2}}>
+                                                    <code className="mono" style={{fontSize:11, color:'#aaa'}}>
+                                                        {window.location.host}/mobile
+                                                    </code>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div style={{width:48, height:48, border:'1.5px solid #333', borderTopColor:'#fff',
+                                                             borderRadius:'50%', animation:'spin 1.1s linear infinite', margin:'0 auto 20px'}}/>
+                                                <div className="mono" style={{fontSize:11, letterSpacing:'0.32em', textTransform:'uppercase', color:'#888'}}>
+                                                    Awaiting Stream
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                                <div style={{position:'absolute', top:14, left:14}}>
+                                    <PingIndicator rtt={rtt} fps={status.current_fps} streamLevel={status.stream_level}/>
+                                </div>
+                                {liveElapsed > 0 && (
+                                    <div style={{position:'absolute', top:14, right:14, zIndex:20}}>
+                                        <div className="ping-pill">
+                                            <span>⏱</span>
+                                            <span className="mono">
+                                                {Math.floor(liveElapsed/60) > 0 ? `${Math.floor(liveElapsed/60)}m ` : ''}{String(liveElapsed%60).padStart(2,'0')}s
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'14px 20px',
+                                         display:'flex', alignItems:'flex-start', gap:18, minHeight:100, flexShrink:0}}>
                                 <div style={{flex:1, minWidth:0}}>
                                     <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
                                         <span className={`stat-dot ${
@@ -1669,108 +1570,17 @@ setStatus(prev => ({
                                             <p style={{margin:0, fontSize:13, color:'var(--ink)', flex:1, wordBreak:'keep-all'}}>
                                                 {failReason || '조립 상태를 다시 확인해 주세요.'}
                                             </p>
-                                            <button onClick={() => setModalImg({src:currentStep?.image_url, title:`STEP ${currentStep?.step}`})}
-                                                    className="mono" style={{background:'transparent', border:'none', color:'var(--bad)', cursor:'pointer',
-                                                    fontSize:10, letterSpacing:'0.2em', textTransform:'uppercase', fontWeight:500}}>참고 이미지 →</button>
                                             <button onClick={() => setShowFail(false)} style={{background:'transparent', border:'none', color:'var(--ink-3)', cursor:'pointer'}}>✕</button>
                                         </div>
                                     )}
-                                    <p style={{margin:0, fontSize:22, lineHeight:1.5, fontWeight:400, color:'var(--ink)', wordBreak:'keep-all'}}>
+                                    <p style={{
+                                        margin:0, fontSize:22, lineHeight:1.5, fontWeight:400, wordBreak:'keep-all',
+                                        color: status.ai_result==='PASS' ? 'var(--good)' :
+                                               status.ai_result==='FAIL' ? 'var(--bad)'  : 'var(--ink)',
+                                        transition:'color 0.3s ease',
+                                    }}>
                                         {status.has_frame ? status.ai_response : '모바일 기기를 연결하여 실시간 코칭을 받으세요.'}
                                     </p>
-                                    {status.has_frame && (
-    <div className="timing-chips" style={{
-        marginTop: 10,
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 8,
-        alignItems: 'center'
-    }}>
-        <span className="mono" style={{
-            fontSize: 10.5,
-            letterSpacing: '0.12em',
-            color: 'var(--ink-3)',
-            padding: '5px 9px',
-            border: '1px solid var(--line-2)',
-            borderRadius: 999,
-            background: 'var(--bg)'
-        }}>
-            SEND IMG {vlmImageSendSec}s
-        </span>
-
-        <span className="mono" style={{
-            fontSize: 10.5,
-            letterSpacing: '0.12em',
-            color: 'var(--ink-4)',
-            padding: '5px 9px',
-            border: '1px solid var(--line-2)',
-            borderRadius: 999,
-            background: 'var(--bg)'
-        }}>
-            VLM {vlmInferenceSec}s
-        </span>
-
-        <span className="mono" style={{
-            fontSize: 10.5,
-            letterSpacing: '0.12em',
-            color: 'var(--ink-4)',
-            padding: '5px 9px',
-            border: '1px solid var(--line-2)',
-            borderRadius: 999,
-            background: 'var(--bg)'
-        }}>
-            RECV {vlmResultRecvSec}s
-        </span>
-
-        <span className="mono" style={{
-            fontSize: 10.5,
-            letterSpacing: '0.12em',
-            color: 'var(--ink-3)',
-            padding: '5px 9px',
-            border: '1px solid var(--line-2)',
-            borderRadius: 999,
-            background: 'var(--bg)'
-        }}>
-            E2E {vlmE2ESec}s
-        </span>
-
-        <span className="mono" style={{
-            fontSize: 10.5,
-            letterSpacing: '0.12em',
-            color: 'var(--ink-4)',
-            padding: '5px 9px',
-            border: '1px solid var(--line-2)',
-            borderRadius: 999,
-            background: 'var(--bg)'
-        }}>
-            VIEW {recvFrameLabel} → {streamFrameLabel}
-        </span>
-
-        <span className="mono" style={{
-            fontSize: 10.5,
-            letterSpacing: '0.12em',
-            color: 'var(--ink-4)',
-            padding: '5px 9px',
-            border: '1px solid var(--line-2)',
-            borderRadius: 999,
-            background: 'var(--bg)'
-        }}>
-            VLM IN {vlmFrameLabel} · {vlmCameraKb}KB
-        </span>
-
-        <span className="mono" style={{
-            fontSize: 10.5,
-            letterSpacing: '0.12em',
-            color: 'var(--ink-4)',
-            padding: '5px 9px',
-            border: '1px solid var(--line-2)',
-            borderRadius: 999,
-            background: 'var(--bg)'
-        }}>
-            HAND {handFrameLabel}
-        </span>
-    </div>
-)}
                                 </div>
                                 {status.has_frame && (
                                     <button className="btn-spline" onClick={triggerVLM} disabled={isAnalyzing}>

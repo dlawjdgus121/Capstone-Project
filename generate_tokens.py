@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    from livekit_client import api
+    from livekit import api
 except ImportError:
     print("❌ pip install python-dotenv livekit livekit-api 먼저 실행하세요")
     exit(1)
@@ -31,8 +31,10 @@ def make_token(identity: str, can_publish: bool, can_subscribe: bool) -> str:
 
 server_token = make_token("server", can_publish=False, can_subscribe=True)
 mobile_token = make_token("mb",     can_publish=True,  can_subscribe=False)
+pc_token     = make_token("pc",     can_publish=False, can_subscribe=True)
 
 print("\n✅ 토큰 생성 완료 — 아래를 .env에 붙여넣으세요\n")
 print(f"LIVEKIT_TOKEN={server_token}")
 print(f"MOBILE_TOKEN={mobile_token}")
+print(f"PC_TOKEN={pc_token}")
 print()

@@ -257,13 +257,19 @@ async def _advance_after_pass_hold(token: int, current_idx: int, next_idx: int, 
         reset_pass_transition()
         return
 
+    # ai_response 먼저 초기화 → 클라이언트가 이 poll에서 AI 응답 TTS 발동
+    state["ai_result"] = "WAIT"
+    state["ai_response"] = "잘 하셨습니다. 다음 단계로 넘어갑니다."
+    state["pending_step_idx"] = None
+    state["pass_hold_until"] = 0.0
+
+    # 1.2초 대기 → 다음 poll에서 스텝 전진 TTS만 발동 (겹침 방지)
+    await asyncio.sleep(1.2)
+
     state["current_step_idx"] = next_idx
     if force:
         state["step_locked"] = False
-    state["ai_result"] = "WAIT"
-    state["ai_response"] = "대기 중..."
-    state["pending_step_idx"] = None
-    state["pass_hold_until"] = 0.0
+    state["ai_response"] = ""
     save_session()
     print(f"[PASS] advanced to STEP {next_idx + 1}")
 
@@ -405,14 +411,21 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
             pred["_timing"] = timing
 
             set_step_label = "yes" if set_step_called else "no"
+            result_label = pred.get("result", "?")
+            _C = "\033[0m"       # reset
+            _G = "\033[92m"      # green  — PASS
+            _R = "\033[91m"      # red    — FAIL
+            _Y = "\033[93m"      # yellow — timing
+            _D = "\033[90m"      # dark   — detail
+            result_color = _G if result_label == "PASS" else (_R if result_label == "FAIL" else _C)
             print(
-                f"⏱️ [MAIN TIMING] step_id={step_id} set_step={set_step_label} "
-                f"set_step_rtt={set_step_ms}ms pre_predict={pre_predict_ms}ms "
-                f"client_get={client_get_ms}ms camera={camera_kb}KB predict_rtt={predict_rtt_ms}ms "
-                f"image_send={image_send_ms}ms "
-                f"gpu_total={gpu_proxy_total_ms}ms gpu_vlm={gpu_vlm_ms}ms "
-                f"gpu_proxy_overhead={gpu_proxy_overhead_ms}ms outer_transport_est={transport_overhead_ms}ms "
-                f"result_recv={result_recv_ms}ms json_parse={response_parse_ms}ms total_call={total_call_ms}ms",
+                f"{_Y}⏱️  SEND:{image_send_ms:.0f}ms │ VLM:{gpu_vlm_ms:.0f}ms │ RECV:{result_recv_ms:.0f}ms │ E2E:{total_call_ms:.0f}ms{_C}  "
+                f"{result_color}[{result_label}]{_C}",
+                flush=True,
+            )
+            print(
+                f"{_D}   set_step={set_step_label}({set_step_ms:.0f}ms) pre={pre_predict_ms:.0f}ms "
+                f"cam={camera_kb}KB rtt={predict_rtt_ms:.0f}ms gpu_total={gpu_proxy_total_ms:.0f}ms{_C}",
                 flush=True,
             )
 
@@ -535,10 +548,10 @@ async def run_vlm_analysis_once(source: str = "manual") -> dict:
         apply_vlm_timing(prediction.get("_timing", {}))
 
         e2e_s = state["vlm_total_s"] or duration
-        state["ai_response"] = f"[{result}] {reason} ({e2e_s:.2f}s)"
+        state["ai_response"] = f"[{result}] {reason}"
         state["ai_result"] = result
-        if source == "manual" and result == "PASS" and idx + 1 < len(state["manual_steps"]):
-            state["ai_response"] = f"[{result}] {reason} - 3초 후 다음 단계로 이동합니다. ({e2e_s:.2f}s)"
+        if result == "PASS" and idx + 1 < len(state["manual_steps"]):
+            state["ai_response"] = f"[{result}] {reason} - 3초 후 다음 단계로 이동합니다."
             schedule_pass_transition(idx, force=True)
         print(f"[VLM:{source}] {duration}s | {result}")
 
@@ -600,11 +613,11 @@ async def coaching_loop():
 
                     e2e_s = state["vlm_total_s"] or (state["vlm_e2e_ms"] / 1000.0)
                     if result == "PASS" and not state["step_locked"] and idx + 1 < len(state["manual_steps"]):
-                        state["ai_response"] = f"[{result}] {reason} - 3초 후 다음 단계로 이동합니다. ({e2e_s:.2f}s)"
+                        state["ai_response"] = f"[{result}] {reason} - 3초 후 다음 단계로 이동합니다."
                         state["ai_result"] = result
                         schedule_pass_transition(idx)
                     else:
-                        state["ai_response"] = f"[{result}] {reason} ({e2e_s:.2f}s)"
+                        state["ai_response"] = f"[{result}] {reason}"
                         state["ai_result"] = result
             await asyncio.sleep(3.0)
         else:
