@@ -259,22 +259,24 @@
             border: 5px solid transparent; border-right-color: var(--ink);
         }
 
-        /* 전체 화면 플래시 — PASS/FAIL 피드백 */
-        @keyframes flash-pass {
-            0%   { opacity:0; }
-            15%  { opacity:0.5; }
-            100% { opacity:0; }
+        .infer-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-family: var(--font-sans); font-size: 12px; font-weight: 600;
+            letter-spacing: -0.005em;
+            padding: 7px 14px; border-radius: 980px;
+            cursor: pointer; transition: all 0.2s ease;
+            white-space: nowrap; border: 1px solid transparent;
         }
-        @keyframes flash-fail {
-            0%   { opacity:0; }
-            15%  { opacity:0.4; }
-            100% { opacity:0; }
+        .infer-btn.off {
+            background: var(--bg); color: var(--ink-3);
+            border-color: var(--line);
         }
-        .flash-overlay {
-            position:fixed; inset:0; z-index:9000; pointer-events:none;
+        .infer-btn.off:hover { background: var(--bg-2); color: var(--ink-2); border-color: rgba(0,0,0,0.15); }
+        .infer-btn.on {
+            background: var(--ink); color: #fff;
+            border-color: var(--ink);
         }
-        .flash-overlay.pass { background:#00875a; animation:flash-pass 0.9s ease-out forwards; }
-        .flash-overlay.fail { background:#b3261e; animation:flash-fail 0.9s ease-out forwards; }
+        .infer-btn.on:hover { background: #424245; border-color: #424245; }
 
                 .fail-banner {
             display: flex; align-items: center; gap: 12px;
@@ -780,7 +782,8 @@ function PCView() {
         ai_result:'WAIT', current_fps:0, stream_level:2,
     });
     const [uploading, setUploading] = useState(false);
-    const [uploadError, setUploadError] = useState('');  // 업로드 에러 메시지
+    const [uploadError, setUploadError] = useState('');
+    const [uploadErrorCode, setUploadErrorCode] = useState('');
     const [userSelectedIdx, setUserSelectedIdx] = useState(null);
     const [flashKey, setFlashKey] = useState(0);
     const [modalImg, setModalImg] = useState(null);
@@ -791,13 +794,13 @@ function PCView() {
     const liveElapsedRef                            = useRef(0);       // 클로저 안에서 최신값 참조용
     const [isDragging, setIsDragging] = useState(false);
     const [ttsOn, setTtsOn] = useState(true);
+    const [autoInfer, setAutoInfer] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [showFail, setShowFail] = useState(false);
     const [failReason, setFailReason] = useState('');
     const [passToast, setPassToast] = useState(false);
     const [rtt, setRtt] = useState(null);
-    const [flashType, setFlashType] = useState(null);  // 'pass' | 'fail' | null
     const [sidebarOpen, setSidebarOpen] = useState(true);  // 왼쪽 사이드바 열림/닫힘
     const [rightWidth, setRightWidth]       = useState(340);   // 오른쪽 패널 너비 (드래그 조절)
     const rightDragRef                          = useRef(null);
@@ -1050,6 +1053,7 @@ function PCView() {
                 setStatus(data);
                 statusRef.current = data;
                 setStreamAlive(!!data.has_frame); // 스트림 표시 여부 동기화
+                if (typeof data.auto_infer_enabled === 'boolean') setAutoInfer(data.auto_infer_enabled);
                 if (data.is_analyzed && data.manual_steps?.length > 0 && view === 'upload' && !uploading && !isNewStart) {
                     setView('coach');
                 }
@@ -1062,8 +1066,9 @@ function PCView() {
         if (!files || !files.length) return;
         // UI 먼저 전환 (reset은 백그라운드)
         setIsNewStart(false);
-        setStatus(prev => ({...prev, analysis_time:0, elapsed_time:0, progress_step:'upload', is_analyzed:false, manual_steps:[]}));
+        setStatus(prev => ({...prev, analysis_time:0, elapsed_time:0, progress_step:'upload', is_analyzed:false, manual_steps:[], uploaded_preview:'', file_info:{name:'',pages:0,steps:0}}));
         setUploadError('');
+        setUploadErrorCode('');
         setPreviewSteps([]);
         setUploading(true);
         setView('upload');
@@ -1079,14 +1084,18 @@ function PCView() {
             const data = await res.json();
             if (data.status === 'success') {
                 setUploadError('');
+                setUploadErrorCode('');
                 setUploading(false);
             } else {
-                throw new Error(data.message || '분석 실패');
+                const err = new Error(data.message || '분석 실패');
+                err.code = data.error_code || '';
+                throw err;
             }
         } catch(e) {
             setUploading(false);
             setUploadError(e.message || '알 수 없는 오류가 발생했습니다.');
-            setView('upload');  // 에러 시 upload 화면 유지
+            setUploadErrorCode(e.code || '');
+            setView('upload');
         }
     }, []);
 
@@ -1142,6 +1151,18 @@ function PCView() {
         finally { setIsAnalyzing(false); }
     }, [isAnalyzing, status.has_frame]);
 
+    const toggleAutoInfer = useCallback(async () => {
+        const next = !autoInfer;
+        setAutoInfer(next);
+        try {
+            await fetch('/set-auto-infer', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: next}),
+            });
+        } catch(e) {}
+    }, [autoInfer]);
+
     const goHome = useCallback(async () => {
         cancelCountdown();
         setView('landing'); setUploading(false); setUserSelectedIdx(null);
@@ -1185,8 +1206,6 @@ function PCView() {
         prevAiResult.current = r;
         if (r === 'PASS') {
             if (passTimerRef.current) return;
-            setFlashType('pass');
-            setTimeout(() => setFlashType(null), 900);
             setPassToast(true);
             const latestIdx = statusRef.current.current_step_idx;
             setUserSelectedIdx(null); setFlashKey(k=>k+1);
@@ -1194,8 +1213,6 @@ function PCView() {
             passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, 1800);
         } else if (r === 'FAIL') {
             if (passTimerRef.current) { clearTimeout(passTimerRef.current); passTimerRef.current=null; setPassToast(false); }
-            setFlashType('fail');
-            setTimeout(() => setFlashType(null), 900);
             const reason = (status.ai_response||'').replace(/^\[\w+\]\s*/,'').trim();
             setFailReason(reason); setShowFail(true);
             if (ttsOn) speak(reason || '오류가 감지되었습니다.');
@@ -1233,9 +1250,6 @@ function PCView() {
 
     return (
         <div style={{minHeight:'100vh', background:'var(--bg)', position:'relative'}}>
-
-            {/* 전체 화면 플래시 — PASS/FAIL 시각적 피드백 */}
-            {flashType && <div className={`flash-overlay ${flashType}`}/>}
 
             {/* 스텝 툴팁 — fixed 위치로 overflow 영향 없음 */}
             {hoveredStep && (
@@ -1303,30 +1317,54 @@ function PCView() {
 
             {/* UPLOAD */}
             {view === 'upload' && (
-                <div style={{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:24, position:'relative'}}>
+                <div style={{position:'relative', minHeight:'100vh', background:'var(--bg)'}}>
                     <button className="btn-quiet" onClick={goHome} style={{position:'absolute', top:24, left:24, zIndex:10}}>← 뒤로가기</button>
-                    <div className="landing-tag" style={{top:24, right:24, left:'auto', zIndex:10}}>step · 01</div>
-                    {uploadError && !uploading && (
-                            <div style={{
-                                width:'100%', maxWidth:560, marginBottom:16,
-                                padding:'14px 18px', borderRadius:12,
-                                background:'#fdf2f1', border:'1px solid rgba(179,38,30,0.2)',
-                                display:'flex', alignItems:'flex-start', gap:12,
-                            }}>
-                                <span style={{color:'var(--bad)', fontSize:16, flexShrink:0}}>⚠️</span>
-                                <div style={{flex:1}}>
-                                    <p style={{margin:'0 0 4px', fontSize:13, fontWeight:600, color:'var(--bad)'}}>매뉴얼 분석 실패</p>
-                                    <p style={{margin:0, fontSize:12, color:'var(--ink-2)', lineHeight:1.5}}>{uploadError}</p>
-                                </div>
-                                <button onClick={() => setUploadError('')}
-                                        style={{background:'transparent', border:'none', cursor:'pointer', color:'var(--ink-4)', fontSize:14}}>✕</button>
-                            </div>
-                        )}
+                    <div className="landing-tag" style={{position:'absolute', top:24, right:24, left:'auto', zIndex:10}}>step · 01</div>
                     {uploading
                         ? <UploadProgress status={status} onCancel={goHome}/>
                         : (
-                            <div style={{display:'flex', alignItems:'center', justifyContent:'center',
-                                         width:'100%', height:'100vh', background:'var(--bg)'}}>
+                            <div style={{
+                                minHeight:'100vh', display:'flex', flexDirection:'column',
+                                alignItems:'center', justifyContent:'center', padding:'80px 24px 24px',
+                            }}>
+                                {/* 에러/경고 배너 */}
+                                {uploadError && (
+                                    <div style={{
+                                        width:'100%', maxWidth:560, marginBottom:16,
+                                        padding:'14px 18px', borderRadius:14,
+                                        background: uploadErrorCode === 'not_manual' ? '#fffbeb' :
+                                                    uploadErrorCode === 'no_crops'   ? '#fff7ed' : '#fdf2f1',
+                                        border: `1px solid ${
+                                            uploadErrorCode === 'not_manual' ? 'rgba(161,107,0,0.25)' :
+                                            uploadErrorCode === 'no_crops'   ? 'rgba(194,103,0,0.22)' :
+                                                                               'rgba(179,38,30,0.20)'}`,
+                                        display:'flex', alignItems:'flex-start', gap:12,
+                                        animation:'step-in 0.22s ease-out',
+                                    }}>
+                                        <span style={{fontSize:18, flexShrink:0, lineHeight:1.2}}>
+                                            {uploadErrorCode === 'not_manual' ? '🚫' :
+                                             uploadErrorCode === 'no_crops'   ? '✂️' : '⚠️'}
+                                        </span>
+                                        <div style={{flex:1}}>
+                                            <p style={{
+                                                margin:'0 0 4px', fontSize:13, fontWeight:600,
+                                                color: uploadErrorCode === 'not_manual' ? '#92400e' :
+                                                       uploadErrorCode === 'no_crops'   ? '#9a3412' : 'var(--bad)',
+                                            }}>
+                                                {uploadErrorCode === 'not_manual' ? '매뉴얼로 인식되지 않음' :
+                                                 uploadErrorCode === 'no_crops'   ? '이미지를 자를 수 없음' : '매뉴얼 분석 실패'}
+                                            </p>
+                                            <p style={{margin:0, fontSize:12.5, color:'var(--ink-2)', lineHeight:1.6, wordBreak:'keep-all'}}>
+                                                {uploadError}
+                                            </p>
+                                        </div>
+                                        <button onClick={() => { setUploadError(''); setUploadErrorCode(''); }}
+                                                style={{background:'transparent', border:'none', cursor:'pointer',
+                                                        color:'var(--ink-4)', fontSize:14, lineHeight:1, flexShrink:0}}>✕</button>
+                                    </div>
+                                )}
+
+                                {/* 업로드 폼 */}
                                 <div className="surface" style={{width:'100%', maxWidth:560, padding:'48px 44px'}}>
                                     <div className="label" style={{marginBottom:14}}>● 매뉴얼 입력</div>
                                     <h2 style={{fontSize:40, fontWeight:300, letterSpacing:'-0.025em', lineHeight:1.05, margin:'0 0 12px'}}>
@@ -1563,6 +1601,11 @@ function PCView() {
                                              status.ai_result==='PASS' ? 'Vision · pass ✓' :
                                              status.ai_result==='FAIL' ? 'Vision · fail ✗' : 'Vision Analytics'}
                                         </span>
+                                        {status.vlm_e2e_ms > 0 && (
+                                            <span className="mono" style={{fontSize:10.5, letterSpacing:'0.12em', color:'var(--ink-4)'}}>
+                                                · E2E {Math.round(status.vlm_e2e_ms)}ms
+                                            </span>
+                                        )}
                                     </div>
                                     {showFail && status.ai_result==='FAIL' && (
                                         <div className="fail-banner">
@@ -1582,15 +1625,29 @@ function PCView() {
                                         {status.has_frame ? status.ai_response : '모바일 기기를 연결하여 실시간 코칭을 받으세요.'}
                                     </p>
                                 </div>
-                                {status.has_frame && (
-                                    <button className="btn-spline" onClick={triggerVLM} disabled={isAnalyzing}>
-                                        {isAnalyzing ? <>
-                                            <span style={{width:11,height:11,border:'1.5px solid var(--bg)', borderTopColor:'transparent',
-                                                          borderRadius:'50%', animation:'spin 0.8s linear infinite', display:'inline-block'}}/>
-                                            Analyzing
-                                        </> : 'VLM Analyze'}
+                                <div style={{display:'flex', flexDirection:'column', gap:8, alignItems:'flex-end', flexShrink:0}}>
+                                    <button className={`infer-btn ${autoInfer ? 'on' : 'off'}`}
+                                            onClick={toggleAutoInfer}>
+                                        <span style={{
+                                            width:7, height:7, borderRadius:'50%',
+                                            background: autoInfer ? '#4ade80' : 'var(--ink-4)',
+                                            flexShrink:0,
+                                            boxShadow: autoInfer ? '0 0 0 3px rgba(74,222,128,0.25)' : 'none',
+                                            transition:'all 0.2s',
+                                        }}/>
+                                        {autoInfer ? '자동추론 ON' : '자동추론 OFF'}
                                     </button>
-                                )}
+                                    {status.has_frame && (
+                                        <button className="btn-spline" onClick={triggerVLM} disabled={isAnalyzing}
+                                                style={{fontSize:13, padding:'9px 18px'}}>
+                                            {isAnalyzing ? <>
+                                                <span style={{width:11,height:11,border:'1.5px solid var(--bg)', borderTopColor:'transparent',
+                                                              borderRadius:'50%', animation:'spin 0.8s linear infinite', display:'inline-block'}}/>
+                                                Analyzing
+                                            </> : 'VLM Analyze'}
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </main>

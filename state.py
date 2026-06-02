@@ -48,6 +48,7 @@ state = {
     "stream_level": 2,
     "fps_history": [],
     "log": "모바일 연결 대기 중...",
+    "auto_infer_enabled": False,
 }
 
 hw_state = {

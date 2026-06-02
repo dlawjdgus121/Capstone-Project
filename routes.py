@@ -121,6 +121,7 @@ def register_routes(app: FastAPI) -> None:
             "file_info": state["file_info"],
             "uploaded_preview": state["uploaded_preview"],
             "elapsed_time": get_elapsed_time(),
+            "auto_infer_enabled": state.get("auto_infer_enabled", False),
         }
 
     @app.post("/reset")
@@ -149,6 +150,11 @@ def register_routes(app: FastAPI) -> None:
         if os.path.exists(SESSION_FILE):
             os.remove(SESSION_FILE)
         return {"status": "ok"}
+
+    @app.post("/set-auto-infer")
+    async def set_auto_infer(body: dict):
+        state["auto_infer_enabled"] = bool(body.get("enabled", False))
+        return {"status": "ok", "auto_infer_enabled": state["auto_infer_enabled"]}
 
     @app.post("/trigger-vlm")
     async def trigger_vlm_analysis():

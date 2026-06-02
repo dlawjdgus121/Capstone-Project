@@ -342,6 +342,25 @@ async def process_manual_files(files: List[UploadFile]):
                 continue
         filtered.append(step)
 
+    if not filtered:
+        state.update({
+            "is_analyzed": False,
+            "progress_step": "upload",
+            "ai_result": "WAIT",
+        })
+        had_raw = len(all_steps) > 0
+        if had_raw:
+            return {
+                "status": "error",
+                "error_code": "no_crops",
+                "message": "이미지 영역을 잘라낼 수 없었습니다. 조립 단계가 명확히 구분된 매뉴얼인지 확인해주세요.",
+            }
+        return {
+            "status": "error",
+            "error_code": "not_manual",
+            "message": "조립 매뉴얼로 인식할 수 없습니다. 조립 단계가 포함된 PDF 또는 이미지를 업로드해주세요.",
+        }
+
     with open(os.path.join(job_dir, "instruction.json"), "w", encoding="utf-8") as f:
         json.dump(filtered, f, ensure_ascii=False, indent=4)
 

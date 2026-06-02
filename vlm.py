@@ -597,7 +597,8 @@ async def coaching_loop():
             state["ai_result"] = "WAIT"
             state["ai_response"] = "모바일 카메라를 연결해 주세요."
         await asyncio.sleep(AUTO_VLM_INTERVAL_SECONDS)
-        await run_auto_vlm_analysis()
+        if state.get("auto_infer_enabled", False):
+            await run_auto_vlm_analysis()
         continue
 
         vlm_frame = state.get("latest_vlm_frame") or state.get("latest_frame")
