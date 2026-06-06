@@ -122,6 +122,13 @@ def register_routes(app: FastAPI) -> None:
             "uploaded_preview": state["uploaded_preview"],
             "elapsed_time": get_elapsed_time(),
             "auto_infer_enabled": state.get("auto_infer_enabled", False),
+            "gesture": state.get("gesture", "NONE"),
+            "gesture_holding_active": state.get("gesture_holding_active", False),
+            "gesture_hold_elapsed": state.get("gesture_hold_elapsed", 0.0),
+            "gesture_hold_required": state.get("gesture_hold_required", 1.5),
+            "gesture_hold_progress": state.get("gesture_hold_progress", 0.0),
+            "tracking_active": state.get("tracking_active", True),
+            "stepper_state": state.get("stepper_state", "STOP"),
         }
 
     @app.post("/reset")
@@ -143,6 +150,13 @@ def register_routes(app: FastAPI) -> None:
                 "progress_step": "upload",
                 "file_info": {"name": "", "pages": 0, "steps": 0},
                 "uploaded_preview": "",
+                "gesture": "NONE",
+                "gesture_holding_active": False,
+                "gesture_hold_elapsed": 0.0,
+                "gesture_hold_required": 1.5,
+                "gesture_hold_progress": 0.0,
+                "tracking_active": True,
+                "stepper_state": "STOP",
             }
         )
         clear_vlm_timing()
@@ -269,8 +283,6 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/")
     @app.get("/mobile")
     async def serve_ui():
-        if os.path.exists("index2.html"):
-            return FileResponse("index2.html")
         if os.path.exists("index.html"):
             return FileResponse("index.html")
-        return {"error": "index2.html not found"}
+        return {"error": "index.html not found"}

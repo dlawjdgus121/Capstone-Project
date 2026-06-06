@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import os
 import re as _re
 import subprocess
@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import CLOUDFLARED_BIN, OUTPUT_DIR, PRELOAD_MANUAL_STEPS, RUNPOD_INFERENCE_BASE_URL
-from routes import register_routes
+from routes1 import register_routes
 from state import load_session, state
 from vlm import (
     REGISTERED_STEP_IDS,
@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
 
     livekit_task = None
     try:
-        from livekit_client import run_livekit
+        from livekit_client1 import run_livekit
 
         livekit_task = asyncio.create_task(run_livekit())
     except Exception as e:

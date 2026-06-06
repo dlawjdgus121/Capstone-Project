@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -737,7 +737,7 @@ function UploadProgress({ status, onCancel }) {
     );
 }
 
-function PingIndicator({ rtt, fps, streamLevel }) {
+function PingIndicator({ rtt, fps, streamLevel, liveElapsed }) {
     const cls   = rtt === null ? '' : rtt <= 50 ? 'live' : rtt <= 150 ? 'warn' : 'bad';
     const label = rtt === null ? '—' : `${rtt}ms`;
     const lvls  = {0:'240p',1:'360p',2:'540p',3:'720p'};
@@ -752,6 +752,12 @@ function PingIndicator({ rtt, fps, streamLevel }) {
             </>}
             <span style={{color:'var(--ink-4)'}}>·</span>
             <span style={{color:'var(--ink-3)'}}>{lvls[lvl]}</span>
+            {liveElapsed > 0 && <>
+                <span style={{color:'var(--ink-4)'}}>·</span>
+                <span className="mono" style={{color:'var(--ink-3)'}}>
+                    {Math.floor(liveElapsed/60) > 0 ? `${Math.floor(liveElapsed/60)}m ` : ''}{String(liveElapsed%60).padStart(2,'0')}s
+                </span>
+            </>}
         </div>
     );
 }
@@ -775,11 +781,13 @@ function PCView() {
         ai_response: '왼쪽 모서리를 조금 더 안쪽으로 접어주세요.',
         manual_steps: DEMO_STEPS, current_step_idx: 1, has_frame: false,
         analysis_time: 26, is_analyzed: true, step_locked: false, progress_step: 'analyze',
-        ai_result: 'WAIT', current_fps: 0, stream_level: 2,
+        ai_result: 'WAIT', current_fps: 0, stream_level: 2, gesture: 'NONE',
+        gesture_holding_active: false, gesture_hold_elapsed: 0, gesture_hold_required: 1.5, gesture_hold_progress: 0,
     } : {
         ai_response:'대기 중...', manual_steps:[], current_step_idx:0, has_frame:false,
         analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload',
-        ai_result:'WAIT', current_fps:0, stream_level:2,
+        ai_result:'WAIT', current_fps:0, stream_level:2, gesture:'NONE',
+        gesture_holding_active:false, gesture_hold_elapsed:0, gesture_hold_required:1.5, gesture_hold_progress:0,
     });
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState('');
@@ -800,6 +808,10 @@ function PCView() {
     const [showFail, setShowFail] = useState(false);
     const [failReason, setFailReason] = useState('');
     const [passToast, setPassToast] = useState(false);
+    const [hwNotice, setHwNotice] = useState(null);
+    const [holdDisplayElapsed, setHoldDisplayElapsed] = useState(0);
+    const holdStartRef = useRef(null);
+    const holdGestureRef = useRef(null);
     const [rtt, setRtt] = useState(null);
     const [sidebarOpen, setSidebarOpen] = useState(true);  // 왼쪽 사이드바 열림/닫힘
     const [rightWidth, setRightWidth]       = useState(340);   // 오른쪽 패널 너비 (드래그 조절)
@@ -912,7 +924,10 @@ function PCView() {
         };
 
         room.on('trackSubscribed', attachVideo);
-        room.on('trackUnsubscribed', () => setStreamAlive(false));
+        room.on('trackUnsubscribed', () => {
+            const v = pcVideoRef.current;
+            if (!v || v.readyState === 0) setStreamAlive(false);
+        });
         room.on('disconnected', () => setStreamAlive(false));
 
 
@@ -980,29 +995,16 @@ function PCView() {
                 liveElapsedRef.current = elapsed;
                 setLiveElapsed(elapsed);
             }
-        }, 1000);
+        }, 250);
         return () => clearInterval(t);
     }, [view, status.has_frame]);
 
     /* 카메라 연결 끊김 감지 → streamAlive 갱신 + QR 재생성 */
     const prevHasFrame = useRef(false);
-    const streamAliveTimer = useRef(null);
     useEffect(() => {
         if (view !== 'coach') return;
         // has_frame이 false로 바뀌면 1초 후에 streamAlive 끔 (순간 깜빡임 방지)
-        if (!status.has_frame) {
-            if (!streamAliveTimer.current) {
-                streamAliveTimer.current = setTimeout(() => {
-                    setStreamAlive(false);
-                    streamAliveTimer.current = null;
-                }, 1000);
-            }
-        } else {
-            if (streamAliveTimer.current) {
-                clearTimeout(streamAliveTimer.current);
-                streamAliveTimer.current = null;
-            }
-        }
+        if (status.has_frame) setStreamAlive(true);
         // 연결됐다가 끊긴 경우 (true → false)
         if (prevHasFrame.current && !status.has_frame) {
             fetch('/config', {cache: 'no-store'})
@@ -1052,13 +1054,13 @@ function PCView() {
                 const data = await res.json();
                 setStatus(data);
                 statusRef.current = data;
-                setStreamAlive(!!data.has_frame); // 스트림 표시 여부 동기화
+                if (data.has_frame) setStreamAlive(true);
                 if (typeof data.auto_infer_enabled === 'boolean') setAutoInfer(data.auto_infer_enabled);
                 if (data.is_analyzed && data.manual_steps?.length > 0 && view === 'upload' && !uploading && !isNewStart) {
                     setView('coach');
                 }
             } catch(e){}
-        }, 1000);
+        }, 250);
         return () => clearInterval(t);
     }, [view, uploading, isNewStart]);
 
@@ -1247,6 +1249,69 @@ function PCView() {
     const isFirstStep = activeIdx <= 0;
     const isLastStep  = activeIdx >= totalSteps-1;
     const isLocked    = userSelectedIdx !== null || status.step_locked;
+    const activeGesture = status.gesture || 'NONE';
+    const gestureHolding = activeGesture.startsWith('HOLDING_') && status.gesture_holding_active !== false;
+    const gestureHoldRequired = Number(status.gesture_hold_required || 1.5);
+
+    const safePersistentHardwareNotice =
+        activeGesture === 'UP' ? '리니어슬라이드 상승 중' :
+        activeGesture === 'DOWN' ? '리니어슬라이드 하강 중' :
+        null;
+    const safeHoldingNotice =
+        gestureHolding && activeGesture === 'HOLDING_TRACKING_OFF' ? '손 추적 중지 인식 중' :
+        gestureHolding && activeGesture === 'HOLDING_TRACKING_ON' ? '손 추적 재개 인식 중' :
+        gestureHolding && activeGesture === 'HOLDING_UP' ? '리니어슬라이드 상승 인식 중' :
+        gestureHolding && activeGesture === 'HOLDING_DOWN' ? '리니어슬라이드 하강 인식 중' :
+        null;
+    const safeTrackingNotice = status.tracking_active === false ? '손 추적 OFF' : '손 추적 ON';
+    const topRightNotice = safeHoldingNotice || hwNotice || safePersistentHardwareNotice || safeTrackingNotice;
+    const hardwareBoxActive = !!(safeHoldingNotice || hwNotice || safePersistentHardwareNotice);
+
+    useEffect(() => {
+        if (!gestureHolding) {
+            holdStartRef.current = null;
+            holdGestureRef.current = null;
+            setHoldDisplayElapsed(0);
+            return;
+        }
+
+        const serverElapsed = Math.max(0, Number(status.gesture_hold_elapsed || 0));
+
+        if (holdGestureRef.current !== activeGesture || holdStartRef.current === null) {
+            holdGestureRef.current = activeGesture;
+            holdStartRef.current = Date.now() - Math.min(serverElapsed, gestureHoldRequired) * 1000;
+        }
+
+        const update = () => {
+            const elapsed = Math.min((Date.now() - holdStartRef.current) / 1000, gestureHoldRequired);
+            setHoldDisplayElapsed(elapsed);
+        };
+
+        update();
+        const t = setInterval(update, 50);
+        return () => clearInterval(t);
+    }, [activeGesture, gestureHolding, gestureHoldRequired, status.gesture_hold_elapsed]);
+
+    useEffect(() => {
+        if (activeGesture.startsWith('HOLDING_') || activeGesture === 'UP' || activeGesture === 'DOWN') {
+            setHwNotice(null);
+            return;
+        }
+
+        const message =
+            activeGesture === 'STOP' ? '리니어슬라이드 정지' :
+            activeGesture === 'TRACKING_OFF' ? '손 추적 OFF' :
+            activeGesture === 'TRACKING_ON' ? '손 추적 ON' :
+            null;
+
+        if (!message) {
+            setHwNotice(null);
+            return;
+        }
+        setHwNotice(message);
+        const t = setTimeout(() => setHwNotice(null), activeGesture === 'STOP' ? 1000 : 1600);
+        return () => clearTimeout(t);
+    }, [activeGesture]);
 
     return (
         <div style={{minHeight:'100vh', background:'var(--bg)', position:'relative'}}>
@@ -1571,9 +1636,66 @@ function PCView() {
                                     </div>
                                 )}
                                 <div style={{position:'absolute', top:14, left:14}}>
-                                    <PingIndicator rtt={rtt} fps={status.current_fps} streamLevel={status.stream_level}/>
+                                    <PingIndicator
+                                        rtt={rtt}
+                                        fps={status.current_fps}
+                                        streamLevel={status.stream_level}
+                                        liveElapsed={liveElapsed}
+                                    />
                                 </div>
-                                {liveElapsed > 0 && (
+                                {streamAlive && topRightNotice && (
+                                    <div style={{
+                                        position:'absolute',
+                                        top:14,
+                                        right:14,
+                                        zIndex:30,
+                                        maxWidth:'min(280px, calc(100% - 28px))',
+                                        padding:'9px 11px',
+                                        border:'1px solid rgba(255,255,255,0.22)',
+                                        borderRadius:8,
+                                        background:'rgba(12,14,18,0.68)',
+                                        color:'#fff',
+                                        backdropFilter:'blur(10px)',
+                                        WebkitBackdropFilter:'blur(10px)',
+                                        boxShadow:'0 12px 30px rgba(0,0,0,0.28)',
+                                        pointerEvents:'none',
+                                    }}>
+                                        <div className="mono" style={{
+                                            fontSize:9,
+                                            letterSpacing:'0.18em',
+                                            textTransform:'uppercase',
+                                            color: hardwareBoxActive ? '#86efac' : (status.tracking_active === false ? '#fca5a5' : '#86efac'),
+                                            marginBottom:4,
+                                            whiteSpace:'nowrap',
+                                        }}>
+                                            {hardwareBoxActive ? 'H/W action' : 'Hand tracking'}
+                                        </div>
+                                        <div style={{
+                                            fontSize:13,
+                                            lineHeight:1.4,
+                                            fontWeight:700,
+                                            wordBreak:'keep-all',
+                                        }}>
+                                            {topRightNotice}
+                                        </div>
+                                        {gestureHolding && (
+                                            <div className="mono" style={{
+                                                marginTop:6,
+                                                padding:'5px 7px',
+                                                border:'1px solid rgba(255,255,255,0.18)',
+                                                borderRadius:6,
+                                                background:'rgba(255,255,255,0.08)',
+                                                color:'#fde68a',
+                                                fontSize:10,
+                                                letterSpacing:'0.08em',
+                                                textAlign:'center',
+                                            }}>
+                                                {holdDisplayElapsed.toFixed(1)}s / {gestureHoldRequired.toFixed(1)}s
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                {false && liveElapsed > 0 && (
                                     <div style={{position:'absolute', top:14, right:14, zIndex:20}}>
                                         <div className="ping-pill">
                                             <span>⏱</span>
