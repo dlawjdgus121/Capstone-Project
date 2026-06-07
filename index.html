@@ -109,6 +109,18 @@
         }
         .step-row:hover { background: rgba(17,17,17,0.02); }
         .step-row[data-active="true"] { background: #f5f5f7; }
+        .substep-row {
+            position: relative;
+            border-bottom: 1px solid var(--line-2);
+            background: rgba(17,17,17,0.015);
+            transition: background 0.15s ease;
+        }
+        .substep-row:hover { background: rgba(0,113,227,0.05); }
+        .substep-row[data-active="true"] { background: rgba(0,113,227,0.08); }
+        .substep-row[data-active="true"]::before {
+            content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+            width: 3px; background: var(--accent);
+        }
         .step-row[data-active="true"]::before {
             content: ""; position: absolute; left: 0; top: 0; bottom: 0;
             width: 3px; background: var(--ink);
@@ -136,6 +148,8 @@
         }
         .img-well:hover { border-color: var(--ink); }
         .img-well img { width:100%; height:100%; object-fit:contain; }
+        .img-well.multi { gap:8px; padding:8px; }
+        .img-well.multi img { flex:1 1 0; min-width:0; width:auto; height:100%; object-fit:contain; cursor:zoom-in; }
         .img-well-placeholder {
             width: 100%; height: 100%;
             background-image: repeating-linear-gradient(45deg, transparent 0 8px, rgba(17,17,17,0.04) 8px 9px);
@@ -668,6 +682,7 @@ function UploadProgress({ status, onCancel }) {
         upload:  '매뉴얼을 읽고 있어요…',
         render:  '페이지를 이미지로 변환 중…',
         analyze: '이미지를 크롭하는 중…',
+        substep: '하위단계로 나누는 중…',
         done:    '완료',
     };
     const curText = stepLabels[status.progress_step] || '시작 중…';
@@ -802,6 +817,7 @@ function PCView() {
     const liveElapsedRef                            = useRef(0);       // 클로저 안에서 최신값 참조용
     const [isDragging, setIsDragging] = useState(false);
     const [ttsOn, setTtsOn] = useState(true);
+    const [mirrorOn, setMirrorOn] = useState(() => localStorage.getItem('mirrorOn') === '1');  // 카메라 좌우 반전(거울)
     const [autoInfer, setAutoInfer] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -844,7 +860,9 @@ function PCView() {
         const audio = new Audio('/tts?text=' + encodeURIComponent(clean));
         speakRef.current = audio;
         audio.play().catch(() => {
-            // 실패 시 Web Speech 폴백
+            // 더 새로운 speak()가 이 audio를 교체/중단했다면 폴백하지 않음
+            // (AbortError로 인한 Web Speech 중복 재생 방지)
+            if (speakRef.current !== audio) return;
             const u = new SpeechSynthesisUtterance(clean);
             u.lang = 'ko-KR'; u.rate = 1.05;
             window.speechSynthesis.speak(u);
@@ -1077,6 +1095,7 @@ function PCView() {
         fetch('/reset', {method:'POST'}).catch(()=>{});
         const fd = new FormData();
         for (let f of files) fd.append('files', f);
+        fd.append('picture', 'false');  // 자동 판별: 표준 분석 후 번호 미검출 시 그림형으로 전환
         try {
             const res = await fetch('/process-manual', { method:'POST', body:fd });
             if (!res.ok) {
@@ -1110,11 +1129,24 @@ function PCView() {
     const activeIdx = userSelectedIdx !== null ? userSelectedIdx : status.current_step_idx;
     const currentStep = totalSteps > 0 ? status.manual_steps[activeIdx] : null;
 
+    // 평면 STEP 목록을 메인 STEP 번호로 그룹화 (하위단계 2단계 네비용)
+    const stepGroups = React.useMemo(() => {
+        const groups = [];
+        (status.manual_steps || []).forEach((s, i) => {
+            const last = groups[groups.length - 1];
+            if (last && last.step === s.step) { last.indices.push(i); }
+            else { groups.push({ step: s.step, indices: [i] }); }
+        });
+        return groups;
+    }, [status.manual_steps]);
+    const activeGroup = stepGroups.find(g => g.indices.includes(activeIdx));
+    const subIndexInGroup = activeGroup ? activeGroup.indices.indexOf(activeIdx) : 0;
+
     useEffect(() => {
         if (view !== 'coach') return;
-        const el = stepRefs.current[activeIdx];
+        const el = stepRefs.current[activeIdx] || stepRefs.current[activeGroup ? activeGroup.indices[0] : activeIdx];
         if (el && listRef.current) el.scrollIntoView({ behavior:'smooth', block:'nearest' });
-    }, [activeIdx, view]);
+    }, [activeIdx, view, activeGroup]);
 
     const cancelCountdown = useCallback(() => {
         if (passTimerRef.current) { clearTimeout(passTimerRef.current); passTimerRef.current = null; }
@@ -1177,6 +1209,8 @@ function PCView() {
         const text = status.ai_response;
         if (!text || text === prevAiResponse.current) return;
         prevAiResponse.current = text;
+        // 대기/플레이스홀더 응답은 읽지 않음(스텝 안내 음성과 겹치거나 끊는 것 방지)
+        if (/^(대기|WAIT)/i.test(text.replace(/^\[\w+\]\s*/, '').trim())) return;
         speak(text);
     }, [status.ai_response, status.has_frame, view, ttsOn, speak]);
 
@@ -1184,11 +1218,10 @@ function PCView() {
     useEffect(() => {
         if (view !== 'coach' || !ttsOn || activeIdx === prevActiveIdx.current) return;
         prevActiveIdx.current = activeIdx;
-        const stepNum = activeIdx + 1;
-        const engNum = ['','one','two','three','four','five','six','seven','eight','nine','ten',
-                        'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen','twenty'];
-        const numWord = stepNum <= 20 ? engNum[stepNum] : stepNum;
-        const msg = `스텝 ${numWord} 시작합니다.`;
+        const cs = status.manual_steps?.[activeIdx];
+        if (!cs) return;
+        // 평면 인덱스가 아니라 매뉴얼의 실제 STEP 번호(+하위)로 안내
+        const msg = cs.sub ? `${cs.step}단계 ${cs.sub}번` : `${cs.step}단계 시작합니다.`;
         speak(msg);
     }, [activeIdx, view, ttsOn, speak]);
 
@@ -1215,9 +1248,7 @@ function PCView() {
             passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, 1800);
         } else if (r === 'FAIL') {
             if (passTimerRef.current) { clearTimeout(passTimerRef.current); passTimerRef.current=null; setPassToast(false); }
-            const reason = (status.ai_response||'').replace(/^\[\w+\]\s*/,'').trim();
-            setFailReason(reason); setShowFail(true);
-            if (ttsOn) speak(reason || '오류가 감지되었습니다.');
+            // FAIL 메시지는 아래 큰 텍스트(ai_response)로 한 번만 표시. 음성도 ai_response effect가 처리.
         }
     }, [status.ai_result, view, ttsOn]);
 
@@ -1392,10 +1423,11 @@ function PCView() {
                                 minHeight:'100vh', display:'flex', flexDirection:'column',
                                 alignItems:'center', justifyContent:'center', padding:'80px 24px 24px',
                             }}>
-                                {/* 에러/경고 배너 */}
+                                {/* 에러/경고 배너 — fixed로 띄워서 카드 레이아웃에 영향 없음 */}
                                 {uploadError && (
                                     <div style={{
-                                        width:'100%', maxWidth:560, marginBottom:16,
+                                        position:'fixed', top:16, left:'50%', transform:'translateX(-50%)',
+                                        width:'calc(100% - 48px)', maxWidth:520, zIndex:9999,
                                         padding:'14px 18px', borderRadius:14,
                                         background: uploadErrorCode === 'not_manual' ? '#fffbeb' :
                                                     uploadErrorCode === 'no_crops'   ? '#fff7ed' : '#fdf2f1',
@@ -1403,6 +1435,7 @@ function PCView() {
                                             uploadErrorCode === 'not_manual' ? 'rgba(161,107,0,0.25)' :
                                             uploadErrorCode === 'no_crops'   ? 'rgba(194,103,0,0.22)' :
                                                                                'rgba(179,38,30,0.20)'}`,
+                                        boxShadow:'0 4px 24px rgba(0,0,0,0.10)',
                                         display:'flex', alignItems:'flex-start', gap:12,
                                         animation:'step-in 0.22s ease-out',
                                     }}>
@@ -1513,37 +1546,78 @@ function PCView() {
                                 </span>
                             </div>
                             <div ref={listRef} className="scroll" style={{flex:1, overflowY:'auto', minHeight:0}}>
-                                {status.manual_steps?.length > 0 ? status.manual_steps.map((s, i) => (
-                                    <div key={i} ref={el => stepRefs.current[i]=el} className="step-row"
-                                         data-active={i===activeIdx} data-aifocus={i===status.current_step_idx}
-                                         onClick={() => forceSetStep(i)}
+                                {status.manual_steps?.length > 0 ? stepGroups.map((g, gi) => {
+                                    const isActive = g.indices.includes(activeIdx);
+                                    const hasAiFocus = g.indices.includes(status.current_step_idx);
+                                    const allPassed = g.indices.every(ix => passedSteps.has(ix));
+                                    const firstIdx = g.indices[0];
+                                    const subTotal = g.indices.length;
+                                    const expanded = isActive && subTotal > 1;  // 활성 STEP만 하위단계 펼침(아코디언)
+                                    return (
+                                    <React.Fragment key={gi}>
+                                    <div ref={el => stepRefs.current[firstIdx]=el} className="step-row"
+                                         data-active={isActive} data-aifocus={hasAiFocus}
+                                         onClick={() => forceSetStep(firstIdx)}
                                          style={{display:'flex', alignItems:'center', justifyContent:'space-between',
-                                                 padding:'22px 18px 22px 22px', position:'relative'}}
+                                                 padding:'20px 18px 20px 22px', position:'relative'}}
                                          onMouseEnter={e => {
                                              const r = e.currentTarget.getBoundingClientRect();
-                                             setHoveredStep({idx:i, x:r.right+12, y:r.top + r.height/2, desc:s.desc, step:s.step});
+                                             setHoveredStep({idx:firstIdx, x:r.right+12, y:r.top + r.height/2, desc:status.manual_steps[firstIdx]?.desc, step:g.step});
                                          }}
                                          onMouseLeave={() => setHoveredStep(null)}>
-                                        <span className="mono" style={{
-                                            fontSize: i===activeIdx ? 17 : 14,
-                                            fontWeight: i===activeIdx ? 600 : 400,
-                                            letterSpacing:'0.06em',
-                                            color: passedSteps.has(i) ? 'var(--good)' :
-                                                   i===activeIdx ? 'var(--ink)' : 'var(--ink-3)',
-                                            transition:'all 0.2s'
-                                        }}>
-                                            {String(s.step).padStart(2,'0')}
+                                        <span style={{display:'flex', alignItems:'center', gap:7}}>
+                                            {subTotal > 1 && (
+                                                <span className="mono" style={{fontSize:9, color:'var(--ink-4)', width:8, display:'inline-block',
+                                                          transform: expanded ? 'rotate(90deg)' : 'none', transition:'transform 0.18s'}}>▶</span>
+                                            )}
+                                            <span className="mono" style={{
+                                                fontSize: isActive ? 17 : 14,
+                                                fontWeight: isActive ? 600 : 400,
+                                                letterSpacing:'0.06em',
+                                                color: allPassed ? 'var(--good)' :
+                                                       isActive ? 'var(--ink)' : 'var(--ink-3)',
+                                                transition:'all 0.2s'
+                                            }}>
+                                                {String(g.step).padStart(2,'0')}
+                                            </span>
+                                            {subTotal > 1 && (
+                                                <span className="mono" style={{fontSize:10, color: isActive ? 'var(--accent)' : 'var(--ink-4)', letterSpacing:'0.05em'}}>
+                                                    {`·${subTotal}`}
+                                                </span>
+                                            )}
                                         </span>
-                                        {passedSteps.has(i) ? (
+                                        {allPassed ? (
                                             <span style={{fontSize:12, color:'var(--good)', fontWeight:600, flexShrink:0}}>✓</span>
-                                        ) : i===status.current_step_idx ? (
+                                        ) : hasAiFocus ? (
                                             <span style={{width:6, height:6, borderRadius:'50%',
                                                           background:'var(--accent)', flexShrink:0,
                                                           boxShadow:'0 0 0 3px rgba(0,113,227,0.18)'}}/>
                                         ) : null}
-
                                     </div>
-                                )) : (
+                                    {expanded && g.indices.map(ix => {
+                                        const sub = status.manual_steps[ix];
+                                        const subActive = ix === activeIdx;
+                                        const subPassed = passedSteps.has(ix);
+                                        return (
+                                            <div key={ix} ref={el => stepRefs.current[ix]=el} className="substep-row"
+                                                 data-active={subActive}
+                                                 onClick={(e) => { e.stopPropagation(); forceSetStep(ix); }}
+                                                 style={{display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                         padding:'9px 18px 9px 44px', cursor:'pointer'}}>
+                                                <span className="mono" style={{
+                                                    fontSize: subActive ? 13 : 12,
+                                                    fontWeight: subActive ? 600 : 400,
+                                                    letterSpacing:'0.04em',
+                                                    color: subPassed ? 'var(--good)' : subActive ? 'var(--accent)' : 'var(--ink-4)',
+                                                    transition:'all 0.15s'
+                                                }}>{sub.label || `${g.step}-${g.indices.indexOf(ix)+1}`}</span>
+                                                {subPassed && <span style={{fontSize:10, color:'var(--good)', flexShrink:0}}>✓</span>}
+                                            </div>
+                                        );
+                                    })}
+                                    </React.Fragment>
+                                    );
+                                }) : (
                                     [1,2,3,4,5,6].map(i => (
                                         <div key={i} className="step-row" style={{opacity:0.4, pointerEvents:'none'}}>
                                             <div className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.18em', marginBottom:6}}>0{i}</div>
@@ -1582,6 +1656,18 @@ function PCView() {
                                                 </div>
                                                 <div className="toggle" data-on={ttsOn}/>
                                             </button>
+                                            <button onClick={() => setMirrorOn(v => { const nv=!v; localStorage.setItem('mirrorOn', nv?'1':'0'); return nv; })}
+                                                    style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                            padding:'10px 8px', background:'transparent', border:'none',
+                                                            cursor:'pointer', borderRadius:2, transition:'background 0.15s'}}
+                                                    onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
+                                                    onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                                                <div style={{textAlign:'left'}}>
+                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>좌우 반전 (거울)</div>
+                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:2}}>전면 카메라용 · 화면 표시만 반전</div>
+                                                </div>
+                                                <div className="toggle" data-on={mirrorOn}/>
+                                            </button>
                                         </div>
                                     </div>
                                 )}
@@ -1605,6 +1691,7 @@ function PCView() {
                                            objectFit: isPortrait ? 'contain' : 'cover',
                                            background:'#000',
                                            display: streamAlive ? 'block' : 'none',
+                                           transform: mirrorOn ? 'scaleX(-1)' : 'none',
                                        }}/>
                                 {!streamAlive && (
                                     /* ── QR 코드 표시 (미연결 시) ── */
@@ -1729,15 +1816,6 @@ function PCView() {
                                             </span>
                                         )}
                                     </div>
-                                    {showFail && status.ai_result==='FAIL' && (
-                                        <div className="fail-banner">
-                                            <span className="dot"/>
-                                            <p style={{margin:0, fontSize:13, color:'var(--ink)', flex:1, wordBreak:'keep-all'}}>
-                                                {failReason || '조립 상태를 다시 확인해 주세요.'}
-                                            </p>
-                                            <button onClick={() => setShowFail(false)} style={{background:'transparent', border:'none', color:'var(--ink-3)', cursor:'pointer'}}>✕</button>
-                                        </div>
-                                    )}
                                     <p style={{
                                         margin:0, fontSize:22, lineHeight:1.5, fontWeight:400, wordBreak:'keep-all',
                                         color: status.ai_result==='PASS' ? 'var(--good)' :
@@ -1819,18 +1897,29 @@ function PCView() {
                                                  display:'flex', alignItems:'baseline', justifyContent:'space-between'}}>
                                         <div>
                                             <div className="label">● 현재 단계</div>
-                                            <div style={{fontSize:18, fontWeight:500, marginTop:4, letterSpacing:'-0.01em'}}>
-                                                STEP <span className="mono" style={{fontWeight:500}}>{String(currentStep.step).padStart(2,'0')}</span>
+                                            <div style={{fontSize:18, fontWeight:500, marginTop:4, letterSpacing:'-0.01em', display:'flex', alignItems:'baseline', gap:8}}>
+                                                <span>STEP <span className="mono" style={{fontWeight:500}}>{String(currentStep.step).padStart(2,'0')}</span></span>
+                                                {currentStep.label && (
+                                                    <span className="mono" style={{fontSize:13, color:'var(--accent)', fontWeight:600}}>
+                                                        {currentStep.label}
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                         <span className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em'}}>
-                                            {activeIdx+1}/{totalSteps}
+                                            {activeGroup ? `${stepGroups.indexOf(activeGroup)+1}/${stepGroups.length}` : `${activeIdx+1}/${totalSteps}`}
+                                            {activeGroup && activeGroup.indices.length>1 ? ` · ${subIndexInGroup+1}/${activeGroup.indices.length}` : ''}
                                         </span>
                                     </div>
                                     <div style={{flex:'0 0 65%', padding:'0 18px 12px', display:'flex', flexDirection:'column', minHeight:0}}>
-                                        <div className="img-well" onClick={() => setModalImg({src:currentStep.image_url, title:`STEP ${currentStep.step}`})}>
+                                        <div className={`img-well${currentStep.extra_images?.length ? ' multi' : ''}`}
+                                             onClick={currentStep.extra_images?.length ? undefined : () => setModalImg({src:currentStep.image_url, title:(currentStep.label||`STEP ${currentStep.step}`)})}>
                                             {currentStep.image_url ?
-                                                <img src={currentStep.image_url} alt="step"/> :
+                                                (currentStep.extra_images?.length ?
+                                                    [currentStep.image_url, ...currentStep.extra_images].map((src, i) =>
+                                                        <img key={i} src={src} alt="step"
+                                                             onClick={(e) => { e.stopPropagation(); setModalImg({src, title:(currentStep.label||`STEP ${currentStep.step}`)}); }}/>) :
+                                                    <img src={currentStep.image_url} alt="step"/>) :
                                                 <div className="img-well-placeholder">step · figure</div>}
                                         </div>
                                     </div>
