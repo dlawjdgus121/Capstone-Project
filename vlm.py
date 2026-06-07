@@ -26,6 +26,13 @@ last_vlm_step_key = None
 RUNPOD_HTTP_CLIENT = None
 
 
+def _log_comm_timing(label: str, url: str, status_code: int, elapsed_ms: float, extra: str = "") -> None:
+    print(
+        f"🔗 [COMM] {label} url={url} status={status_code} time={elapsed_ms:.0f}ms {extra}",
+        flush=True,
+    )
+
+
 def get_runpod_http_client() -> httpx.AsyncClient:
     global RUNPOD_HTTP_CLIENT
     if RUNPOD_HTTP_CLIENT is None or RUNPOD_HTTP_CLIENT.is_closed:
@@ -117,7 +124,7 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
                 data={
                     "step_id": step_id,
                     "prompt": prompt,
-                    "warmup": "true" if warmup else "false",
+                    "warmup": "false" if warmup else "false",
                 },
             )
 
@@ -186,7 +193,7 @@ async def preload_steps_to_gpu(steps: list):
                         data={
                             "step_id": step_id,
                             "prompt": prompt,
-                            "warmup": "true" if PRELOAD_WARMUP else "false",
+                            "warmup": "false" if PRELOAD_WARMUP else "false",
                         },
                     )
 
@@ -327,6 +334,7 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
                     data={"step_id": step_id, "prompt": prompt, "warmup": "false"},
                 )
             set_step_ms = elapsed_ms(set_step_start_perf)
+            _log_comm_timing("SET_STEP", RUNPOD_SET_STEP_URL, set_resp.status_code, set_step_ms, f"step_id={step_id}")
 
             if set_resp.status_code != 200:
                 body_preview = set_resp.text[:300].replace("\n", " ")
@@ -364,6 +372,7 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
         )
         response_recv_wall = time.time()
         predict_rtt_ms = elapsed_ms(predict_start_perf)
+        _log_comm_timing("PREDICT", RUNPOD_PREDICT_URL, pred_resp.status_code, predict_rtt_ms, f"step_id={step_id} cam={camera_kb}KB")
 
         if pred_resp.status_code == 200:
             response_parse_start_perf = time.perf_counter()
@@ -426,6 +435,14 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
             print(
                 f"{_D}   set_step={set_step_label}({set_step_ms:.0f}ms) pre={pre_predict_ms:.0f}ms "
                 f"cam={camera_kb}KB rtt={predict_rtt_ms:.0f}ms gpu_total={gpu_proxy_total_ms:.0f}ms{_C}",
+                flush=True,
+            )
+            print(
+                f"{_D}   TIMING SUMMARY: client_get={client_get_ms:.0f}ms | set_step={set_step_ms:.0f}ms | "
+                f"pre_predict={pre_predict_ms:.0f}ms | predict_rtt={predict_rtt_ms:.0f}ms | "
+                f"transport={transport_overhead_ms:.0f}ms | send={image_send_ms:.0f}ms | "
+                f"recv={result_recv_ms:.0f}ms | parse={response_parse_ms:.0f}ms | "
+                f"gpu_total={gpu_proxy_total_ms:.0f}ms | total={total_call_ms:.0f}ms{_C}",
                 flush=True,
             )
 
@@ -530,6 +547,13 @@ async def run_vlm_analysis_once(source: str = "manual") -> dict:
         return {"status": "error", "message": "현재 STEP 이미지 없음", "source": source}
 
     desc = current_step.get("desc", "")
+    frame_kb = round(len(vlm_frame) / 1024.0, 2)
+    desc_snippet = desc[:30].replace("\n", " ")
+    print(
+        f"🔌 [VLM START] source={source} step={idx + 1}/{total} "
+        f"frame_kb={frame_kb} desc={desc_snippet}",
+        flush=True,
+    )
     start = time.perf_counter()
     state["is_processing"] = True
     try:
@@ -546,6 +570,16 @@ async def run_vlm_analysis_once(source: str = "manual") -> dict:
         result = prediction.get("result", "UNKNOWN")
         reason = prediction.get("reason", "분석 완료")
         apply_vlm_timing(prediction.get("_timing", {}))
+        timing = _vlm_timing_response()
+        print(
+            f"🔍 [VLM END] source={source} step={idx + 1}/{total} "
+            f"e2e={timing['vlm_e2e_ms']:.0f}ms infer={timing['vlm_latency_ms']:.0f}ms "
+            f"proxy={timing['vlm_proxy_ms']:.0f}ms transport={timing['vlm_transport_ms']:.0f}ms "
+            f"send={timing['vlm_image_send_ms']:.0f}ms recv={timing['vlm_result_recv_ms']:.0f}ms "
+            f"set_step={timing['vlm_set_step_ms']:.0f}ms pre_predict={timing['vlm_pre_predict_ms']:.0f}ms "
+            f"client_get={timing['vlm_http_client_get_ms']:.0f}ms",
+            flush=True,
+        )
 
         e2e_s = state["vlm_total_s"] or duration
         state["ai_response"] = f"[{result}] {reason}"

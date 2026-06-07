@@ -1,6 +1,8 @@
 import asyncio
+import concurrent.futures
 import math
 import socket
+import threading
 import time
 
 import cv2
@@ -24,16 +26,29 @@ from state import clear_frame_state, hw_state, state
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(
-    max_num_hands=2,
-    model_complexity=0,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
+thread_local_hands = threading.local()
+
+
+def get_hands():
+    if not hasattr(thread_local_hands, "hands"):
+        thread_local_hands.hands = mp_hands.Hands(
+            max_num_hands=2,
+            model_complexity=0,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+    return thread_local_hands.hands
+
 last_vlm_encode_time = 0.0
 cached_vlm_bytes = None
-VLM_ENCODE_INTERVAL = 0.4
+VLM_ENCODE_INTERVAL = 3.0
+LOG_FRAME_INTERVAL = 0.25
+DROP_LOG_INTERVAL = 2.0
+PROCESS_INTERVAL_SECONDS = 0.08
+last_frame_log_time = 0.0
+last_drop_log_time = 0.0
 latest_raw_frame = None
+latest_raw_frame_time = 0.0
 prev_frame_time = 0.0
 last_servo_calc_time = 0.0
 filtered_hand_x = None
@@ -697,7 +712,7 @@ def frame_size_label(width: int, height: int) -> str:
 
 
 def encode_jpeg(img_bgr, width: int, height: int, quality: int) -> bytes:
-    img_out = cv2.resize(img_bgr, (width, height), interpolation=cv2.INTER_LINEAR)
+    img_out = cv2.resize(img_bgr, (width, height), interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", img_out, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     if not ok:
         raise RuntimeError("JPEG encode failed")
@@ -723,15 +738,22 @@ def heavy_processing(img_bgr, level=2):
     source_w, source_h = w, h
     detected_stepper_cmd = "NONE"
 
+    mp_pre_start = time.perf_counter()
     mp_input = cv2.resize(
         img_bgr,
         (HAND_TRACK_WIDTH, HAND_TRACK_HEIGHT),
-        interpolation=cv2.INTER_LINEAR
+        interpolation=cv2.INTER_AREA
     )
+    mp_rgb = cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB)
+    heavy_mp_pre_ms = round((time.perf_counter() - mp_pre_start) * 1000.0, 2)
 
-    results = hands.process(cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB))
+    mp_infer_start = time.perf_counter()
+    results = get_hands().process(mp_rgb)
+    heavy_mp_infer_ms = round((time.perf_counter() - mp_infer_start) * 1000.0, 2)
+
     detected_hands = get_detected_hands(results)
 
+    gesture_start = time.perf_counter()
     # 1. 두 손 추적 ON/OFF 제스처 우선 처리
     two_hand_cmd = classify_two_hand_command(detected_hands)
 
@@ -833,12 +855,15 @@ def heavy_processing(img_bgr, level=2):
     stream_level_for_server = 0
     out_w, out_h, quality, _ = STREAM_LEVELS[stream_level_for_server]
 
+    stream_encode_start = time.perf_counter()
     stream_bytes = encode_jpeg(img_bgr, out_w, out_h, quality)
+    heavy_stream_jpeg_ms = round((time.perf_counter() - stream_encode_start) * 1000.0, 2)
 
     # VLM용 JPEG는 매 프레임 만들지 않고 일정 주기로만 갱신
     now = time.time()
 
     if cached_vlm_bytes is None or now - last_vlm_encode_time >= VLM_ENCODE_INTERVAL:
+        vlm_encode_start = time.perf_counter()
         cached_vlm_bytes = encode_jpeg(
             img_bgr,
             VLM_FRAME_WIDTH,
@@ -846,8 +871,14 @@ def heavy_processing(img_bgr, level=2):
             VLM_JPEG_QUALITY
         )
         last_vlm_encode_time = now
+        heavy_vlm_jpeg_ms = round((time.perf_counter() - vlm_encode_start) * 1000.0, 2)
+    else:
+        heavy_vlm_jpeg_ms = 0.0
 
     vlm_bytes = cached_vlm_bytes
+
+    heavy_gesture_ms = round((time.perf_counter() - gesture_start) * 1000.0, 2)
+    heavy_total_ms = round((time.perf_counter() - mp_pre_start) * 1000.0, 2)
 
     frame_meta = {
         "recv_frame_size": frame_size_label(source_w, source_h),
@@ -863,14 +894,25 @@ def heavy_processing(img_bgr, level=2):
         "gesture_hold_progress": round(gesture_state["hold_progress"], 3),
         "tracking_active": hw_state["is_servo_active"],
         "stepper_state": hw_state["current_stepper_state"],
+        "heavy_mp_pre_ms": heavy_mp_pre_ms,
+        "heavy_mp_infer_ms": heavy_mp_infer_ms,
+        "heavy_gesture_ms": heavy_gesture_ms,
+        "heavy_stream_jpeg_ms": heavy_stream_jpeg_ms,
+        "heavy_vlm_jpeg_ms": heavy_vlm_jpeg_ms,
+        "heavy_total_ms": heavy_total_ms,
     }
 
     return stream_bytes, vlm_bytes, detected_stepper_cmd, frame_meta
 
 
 async def process_video_track(track: rtc.VideoTrack):
-    global latest_raw_frame, prev_frame_time
+    global prev_frame_time
     loop = asyncio.get_event_loop()
+    heavy_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    latest_frame = None
+    latest_frame_arrival = 0.0
+    current_heavy_future = None
+    dropped_frames = 0
 
     video_stream = rtc.VideoStream(track)
     try:
@@ -881,14 +923,108 @@ async def process_video_track(track: rtc.VideoTrack):
         except AttributeError:
             target_format = 3
 
+    def update_state(frame_bytes, vlm_frame_bytes, stepper_cmd, frame_meta, arrival_ms, convert_ms):
+        nonlocal current_heavy_future
+        try:
+            if stepper_cmd == "STOP":
+                if hw_state["current_stepper_state"] != "STOP":
+                    sock.sendto(b"S", (ESP32_IP, UDP_PORT))
+                    hw_state["current_stepper_state"] = "STOP"
+                    print("🛑 [HW] STEPPER STOP")
+            elif stepper_cmd in ["UP", "DOWN"]:
+                actual_stepper_cmd = "DOWN" if stepper_cmd == "UP" else "UP"
+                if actual_stepper_cmd != hw_state["current_stepper_state"]:
+                    udp_cmd = actual_stepper_cmd[0]
+                    sock.sendto(udp_cmd.encode(), (ESP32_IP, UDP_PORT))
+                    hw_state["current_stepper_state"] = actual_stepper_cmd
+                    print(
+                        f"🧭 [HW] STEPPER gesture={stepper_cmd} "
+                        f"actual={actual_stepper_cmd}"
+                    )
+
+            first_frame = state["latest_frame"] is None
+            state_update_start = time.perf_counter()
+            state["latest_frame"] = frame_bytes
+            state["latest_vlm_frame"] = vlm_frame_bytes
+            state["recv_frame_size"] = frame_meta["recv_frame_size"]
+            state["stream_frame_size"] = frame_meta["stream_frame_size"]
+            state["vlm_frame_size"] = frame_meta["vlm_frame_size"]
+            state["hand_frame_size"] = frame_meta["hand_frame_size"]
+            state["stream_camera_kb"] = round(len(frame_bytes) / 1024.0, 2)
+            state["vlm_camera_kb"] = round(len(vlm_frame_bytes) / 1024.0, 2)
+            state["gesture"] = frame_meta.get("gesture", "NONE")
+            state["gesture_holding_active"] = frame_meta.get("gesture_holding_active", False)
+            state["gesture_hold_elapsed"] = frame_meta.get("gesture_hold_elapsed", 0.0)
+            state["gesture_hold_required"] = frame_meta.get("gesture_hold_required", 1.5)
+            state["gesture_hold_progress"] = frame_meta.get("gesture_hold_progress", 0.0)
+            state["tracking_active"] = frame_meta.get("tracking_active", True)
+            state["stepper_state"] = frame_meta.get("stepper_state", "STOP")
+            state["log"] = (
+                f"📡 WebRTC | FPS: {round(state['current_fps'], 1)} | "
+                f"recv {frame_meta['recv_frame_size']} | "
+                f"stream {frame_meta['stream_frame_size']} | "
+                f"VLM {frame_meta['vlm_frame_size']} | "
+                f"gesture {frame_meta.get('gesture', 'NONE')} | "
+                f"tracking {'ON' if frame_meta.get('tracking_active') else 'OFF'}"
+            )
+            state_update_ms = round((time.perf_counter() - state_update_start) * 1000.0, 2)
+            total_ms = round(arrival_ms + convert_ms + frame_meta.get('heavy_total_ms', 0.0) + state_update_ms, 2)
+            heavy_detail = (
+                f"mp={frame_meta['heavy_mp_pre_ms']:.0f}+{frame_meta['heavy_mp_infer_ms']:.0f} "
+                f"gest={frame_meta['heavy_gesture_ms']:.0f} "
+                f"jpeg={frame_meta['heavy_stream_jpeg_ms']:.0f} "
+                f"vlm={frame_meta['heavy_vlm_jpeg_ms']:.0f} "
+                f"total={frame_meta['heavy_total_ms']:.0f}"
+            )
+            print(
+                f"🛰️ [FRAME] arrival={arrival_ms:.0f}ms convert={convert_ms:.0f}ms "
+                f"heavy={frame_meta['heavy_total_ms']:.0f}ms({heavy_detail}) "
+                f"update={state_update_ms:.0f}ms total={total_ms:.0f}ms "
+                f"fps={state['current_fps']:.1f} recv={state['recv_frame_size']} "
+                f"stream={state['stream_frame_size']} vlm={state['vlm_frame_size']}",
+                flush=True,
+            )
+            if first_frame:
+                print(
+                    f"✅ [CAM CONNECTED] recv={state['recv_frame_size']} "
+                    f"stream={state['stream_frame_size']} vlm={state['vlm_frame_size']} "
+                    f"stream_kb={state['stream_camera_kb']} vlm_kb={state['vlm_camera_kb']} "
+                    f"fps={state['current_fps']:.1f}",
+                    flush=True,
+                )
+        finally:
+            current_heavy_future = None
+
+    def heavy_done(fut):
+        nonlocal current_heavy_future
+        try:
+            frame_bytes, vlm_frame_bytes, stepper_cmd, frame_meta = fut.result()
+            meta = getattr(fut, 'meta', {})
+            loop.call_soon_threadsafe(
+                update_state,
+                frame_bytes,
+                vlm_frame_bytes,
+                stepper_cmd,
+                frame_meta,
+                meta.get('arrival_ms', 0.0),
+                meta.get('convert_ms', 0.0),
+            )
+        except Exception as e:
+            print(f"🚨 heavy task error: {e}")
+        finally:
+            current_heavy_future = None
+
     async def recv_loop():
-        global latest_raw_frame, prev_frame_time
+        nonlocal latest_frame, latest_frame_arrival
+        global prev_frame_time
         async for event in video_stream:
             try:
+                frame_recv_start = time.perf_counter()
                 rgba_frame = event.frame.convert(target_format)
-                latest_raw_frame = rgba_frame
+                latest_frame = rgba_frame
+                latest_frame_arrival = frame_recv_start
 
-                curr_time = time.time()
+                curr_time = frame_recv_start
                 if prev_frame_time > 0:
                     diff = curr_time - prev_frame_time
                     if diff > 0.01:
@@ -896,37 +1032,44 @@ async def process_video_track(track: rtc.VideoTrack):
                 prev_frame_time = curr_time
             except Exception as e:
                 print(f"🚨 수신 오류: {e}")
-                latest_raw_frame = None
+                latest_frame = None
+                latest_frame_arrival = 0.0
                 clear_frame_state()
                 state["log"] = "모바일 연결 끊김"
                 break
 
     async def process_loop():
-        global latest_raw_frame
-        skip_count = 0
-        last_frame_time = time.time()
+        nonlocal latest_frame, latest_frame_arrival, current_heavy_future, dropped_frames
+        global last_frame_log_time, last_drop_log_time
+        last_frame_time = time.perf_counter()
 
         while True:
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(PROCESS_INTERVAL_SECONDS)
 
-            frame = latest_raw_frame
-            if frame is None:
+            if latest_frame is None:
                 keep_servo_command_alive()
-
-                if time.time() - last_frame_time > 3.0 and state["latest_frame"] is not None:
+                if time.perf_counter() - last_frame_time > 3.0 and state["latest_frame"] is not None:
                     clear_frame_state()
                     state["log"] = "모바일 연결 끊김"
                     print("⚠️ [STREAM] 프레임 타임아웃 — 연결 끊김으로 판단")
                 continue
 
-            last_frame_time = time.time()
-            latest_raw_frame = None
-
-            skip_count += 1
-            skip_rate = 1
-
-            if skip_count % skip_rate != 0:
+            if current_heavy_future is not None and not current_heavy_future.done():
+                dropped_frames += 1
+                if time.perf_counter() - last_drop_log_time >= DROP_LOG_INTERVAL:
+                    print(f"⚠️ [DROP] heavy worker busy, dropped {dropped_frames} frames", flush=True)
+                    last_drop_log_time = time.perf_counter()
+                    dropped_frames = 0
                 continue
+
+            frame = latest_frame
+            frame_arrival_time = latest_frame_arrival
+            latest_frame = None
+            latest_frame_arrival = 0.0
+            last_frame_time = time.perf_counter()
+
+            process_start = time.perf_counter()
+            arrival_ms = round((process_start - frame_arrival_time) * 1000.0, 2) if frame_arrival_time > 0 else 0.0
 
             fps = state["current_fps"]
             if fps > 0:
@@ -949,59 +1092,17 @@ async def process_video_track(track: rtc.VideoTrack):
                         history.clear()
 
             try:
+                convert_start = time.perf_counter()
                 img = np.frombuffer(frame.data, dtype=np.uint8).reshape((frame.height, frame.width, 4))
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                convert_ms = round((time.perf_counter() - convert_start) * 1000.0, 2)
 
-                frame_bytes, vlm_frame_bytes, stepper_cmd, frame_meta = await loop.run_in_executor(
-                    None, heavy_processing, img_bgr, state["stream_level"]
-                )
-
-                if stepper_cmd == "STOP":
-                    if hw_state["current_stepper_state"] != "STOP":
-                        sock.sendto(b"S", (ESP32_IP, UDP_PORT))
-                        hw_state["current_stepper_state"] = "STOP"
-                        print("🛑 [HW] STEPPER STOP")
-
-                elif stepper_cmd in ["UP", "DOWN"]:
-                    # 하드웨어 방향 반전
-                    actual_stepper_cmd = "DOWN" if stepper_cmd == "UP" else "UP"
-
-                    if actual_stepper_cmd != hw_state["current_stepper_state"]:
-                        udp_cmd = actual_stepper_cmd[0]  # UP -> U, DOWN -> D
-                        sock.sendto(udp_cmd.encode(), (ESP32_IP, UDP_PORT))
-                        hw_state["current_stepper_state"] = actual_stepper_cmd
-                        print(
-                            f"🧭 [HW] STEPPER gesture={stepper_cmd} "
-                            f"actual={actual_stepper_cmd}"
-                        )
-
-                elif stepper_cmd == "NONE":
-                    # 아무 제스처가 없으면 현재 상태 유지
-                    pass
-
-                state["latest_frame"] = frame_bytes
-                state["latest_vlm_frame"] = vlm_frame_bytes
-                state["recv_frame_size"] = frame_meta["recv_frame_size"]
-                state["stream_frame_size"] = frame_meta["stream_frame_size"]
-                state["vlm_frame_size"] = frame_meta["vlm_frame_size"]
-                state["hand_frame_size"] = frame_meta["hand_frame_size"]
-                state["stream_camera_kb"] = round(len(frame_bytes) / 1024.0, 2)
-                state["vlm_camera_kb"] = round(len(vlm_frame_bytes) / 1024.0, 2)
-                state["gesture"] = frame_meta.get("gesture", "NONE")
-                state["gesture_holding_active"] = frame_meta.get("gesture_holding_active", False)
-                state["gesture_hold_elapsed"] = frame_meta.get("gesture_hold_elapsed", 0.0)
-                state["gesture_hold_required"] = frame_meta.get("gesture_hold_required", 1.5)
-                state["gesture_hold_progress"] = frame_meta.get("gesture_hold_progress", 0.0)
-                state["tracking_active"] = frame_meta.get("tracking_active", True)
-                state["stepper_state"] = frame_meta.get("stepper_state", "STOP")
-                state["log"] = (
-                    f"📡 WebRTC | FPS: {round(state['current_fps'], 1)} | "
-                    f"recv {frame_meta['recv_frame_size']} | "
-                    f"stream {frame_meta['stream_frame_size']} | "
-                    f"VLM {frame_meta['vlm_frame_size']} | "
-                    f"gesture {frame_meta.get('gesture', 'NONE')} | "
-                    f"tracking {'ON' if frame_meta.get('tracking_active') else 'OFF'}"
-                )
+                current_heavy_future = heavy_executor.submit(heavy_processing, img_bgr, state["stream_level"])
+                current_heavy_future.meta = {
+                    "arrival_ms": arrival_ms,
+                    "convert_ms": convert_ms,
+                }
+                current_heavy_future.add_done_callback(heavy_done)
             except Exception as e:
                 print(f"🚨 영상 처리 오류: {e}")
 

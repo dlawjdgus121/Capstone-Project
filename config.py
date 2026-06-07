@@ -84,17 +84,17 @@ RUNPOD_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 ESP32_IP = "192.168.137.227"
 UDP_PORT = 12345
 
-HAND_TRACK_WIDTH = env_int("HAND_TRACK_WIDTH", 320)
-HAND_TRACK_HEIGHT = env_int("HAND_TRACK_HEIGHT", 180)
-VLM_FRAME_WIDTH = env_int("VLM_FRAME_WIDTH", 960)
-VLM_FRAME_HEIGHT = env_int("VLM_FRAME_HEIGHT", 540)
-VLM_JPEG_QUALITY = max(1, min(95, env_int("VLM_JPEG_QUALITY", 70)))
+HAND_TRACK_WIDTH = env_int("HAND_TRACK_WIDTH", 96)
+HAND_TRACK_HEIGHT = env_int("HAND_TRACK_HEIGHT", 96)
+VLM_FRAME_WIDTH = env_int("VLM_FRAME_WIDTH", 640)
+VLM_FRAME_HEIGHT = env_int("VLM_FRAME_HEIGHT", 360)
+VLM_JPEG_QUALITY = max(1, min(95, env_int("VLM_JPEG_QUALITY", 40)))
 
 STREAM_LEVELS = {
-    0: (426, 240, 40, "저화질 240p"),
-    1: (640, 360, 55, "중간 360p"),
-    2: (960, 540, 70, "고화질 540p"),
-    3: (1280, 720, 85, "최고 720p"),
+    0: (320, 180, 20, "초저화질 180p"),
+    1: (426, 240, 30, "저화질 240p"),
+    2: (640, 360, 45, "중간 360p"),
+    3: (854, 480, 55, "고화질 480p"),
 }
 FPS_THRESHOLDS = {
     "down": 15,

@@ -18,6 +18,13 @@ from state import save_session, state
 from vlm import REGISTERED_STEP_IDS, WARMED_STEP_IDS, preload_steps_to_gpu
 
 _preview_steps: list = []
+
+
+def _log_comm_timing(label: str, url: str, status_code: int, elapsed_ms: float, extra: str = "") -> None:
+    print(
+        f"🔗 [COMM] {label} url={url} status={status_code} time={elapsed_ms:.0f}ms {extra}",
+        flush=True,
+    )
 _preview_updated: bool = False
 _analysis_start_time: float = 0.0
 
@@ -42,6 +49,7 @@ def _has_foreign_text(text: str) -> bool:
 async def _translate_to_korean(client: httpx.AsyncClient, text: str) -> str:
     """외국어 텍스트를 한국어로 번역. 실패 시 원문 반환."""
     try:
+        start = time.perf_counter()
         res = await client.post(
             GEMINI_URL,
             json={
@@ -50,12 +58,14 @@ async def _translate_to_korean(client: httpx.AsyncClient, text: str) -> str:
             },
             timeout=15.0,
         )
+        elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
+        _log_comm_timing("GEMINI-TRANSLATE", GEMINI_URL, res.status_code, elapsed_ms, "translate text")
         if res.status_code == 200:
             translated = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             if translated:
                 return translated
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"🚨 [GEMINI-TRANSLATE ERROR] {e}", flush=True)
     return text
 
 
@@ -132,6 +142,7 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             '{"steps":[{"step_number":int,"title":"STEP N","desc":"설명","box_2d":[int,int,int,int]}]}'
         )
 
+        start = time.perf_counter()
         res = await client.post(
             GEMINI_URL,
             json={
@@ -140,6 +151,8 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             },
             timeout=60.0,
         )
+        elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
+        _log_comm_timing("GEMINI-PAGE", GEMINI_URL, res.status_code, elapsed_ms, f"page={page_num}")
         if res.status_code != 200:
             return []
 
@@ -205,6 +218,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
 - box_2d: [ymin,xmin,ymax,xmax] 0~1000
 {"steps":[{"step_number":int,"title":str,"desc":str,"box_2d":[int,int,int,int]}]}"""
 
+        start = time.perf_counter()
         res = await client.post(
             GEMINI_URL,
             json={
@@ -213,6 +227,8 @@ async def detect_and_crop_image(client, img_path, base_idx):
             },
             timeout=60.0,
         )
+        elapsed_ms = round((time.perf_counter() - start) * 1000.0, 2)
+        _log_comm_timing("GEMINI-DETECT", GEMINI_URL, res.status_code, elapsed_ms, f"img_path={os.path.basename(img_path)}")
         if res.status_code != 200:
             return []
 
