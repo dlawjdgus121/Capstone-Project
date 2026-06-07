@@ -807,6 +807,9 @@ function PCView() {
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState('');
     const [uploadErrorCode, setUploadErrorCode] = useState('');
+    const [quality, setQuality] = useState('auto');  // 분석 정밀도: auto(타입 자동)|fast(빠름)|accurate(정확)
+    const qualityRef = useRef('auto');
+    qualityRef.current = quality;  // uploadFiles(빈 deps)에서 최신값 읽기 위해 ref 동기화
     const [userSelectedIdx, setUserSelectedIdx] = useState(null);
     const [flashKey, setFlashKey] = useState(0);
     const [modalImg, setModalImg] = useState(null);
@@ -1096,6 +1099,7 @@ function PCView() {
         const fd = new FormData();
         for (let f of files) fd.append('files', f);
         fd.append('picture', 'false');  // 자동 판별: 표준 분석 후 번호 미검출 시 그림형으로 전환
+        fd.append('quality', qualityRef.current);  // 분석 정밀도(auto|fast|accurate)
         try {
             const res = await fetch('/process-manual', { method:'POST', body:fd });
             if (!res.ok) {
@@ -1485,6 +1489,28 @@ function PCView() {
                                         </p>
                                     </div>
                                     <input type="file" multiple ref={inputRef} onChange={onUpload} style={{display:'none'}} accept=".pdf,image/*"/>
+
+                                    {/* 분석 정밀도 토글 — 자동(타입 기반) / 빠름 / 정확 */}
+                                    <div style={{marginTop:20, display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap'}}>
+                                        <span style={{fontSize:12.5, color:'var(--ink-3)'}}>분석 정밀도</span>
+                                        <div style={{display:'flex', gap:4, padding:3, background:'var(--bg-2)', border:'1px solid var(--line-2)', borderRadius:9}}>
+                                            {[['auto','자동'],['fast','빠름'],['accurate','정확']].map(([v,label]) => (
+                                                <button key={v} onClick={() => setQuality(v)}
+                                                        style={{
+                                                            padding:'6px 14px', fontSize:12.5, fontWeight:500, cursor:'pointer',
+                                                            border:'none', borderRadius:6, transition:'all .15s',
+                                                            background: quality===v ? 'var(--accent)' : 'transparent',
+                                                            color: quality===v ? '#fff' : 'var(--ink-3)'}}>
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <p style={{margin:'10px 0 0', fontSize:11.5, color:'var(--ink-4)', lineHeight:1.5}}>
+                                        {quality==='auto' && '이미지는 빠르게, PDF(레고 등)는 정확하게 자동 선택합니다.'}
+                                        {quality==='fast' && '추론을 낮춰 빠르게 분석합니다. 단순한 매뉴얼에 적합.'}
+                                        {quality==='accurate' && '추론을 높여 정확하게 분석합니다. 복잡한 조립 매뉴얼에 적합(느림).'}
+                                    </p>
                                 </div>
                             </div>
                         )

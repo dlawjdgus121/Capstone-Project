@@ -21,6 +21,38 @@ _preview_steps: list = []
 _preview_updated: bool = False
 _analysis_start_time: float = 0.0
 
+# gemini-3 thinking 양(낮을수록 빠름·정확도↓).
+# - 번역: 항상 low (직역 품질 동일, 무조건 빠름)
+# - 탐지/하위셀: 매뉴얼 타입으로 자동(단일 이미지→low, 복잡한 PDF→high) + 요청별 override.
+TRANSLATE_THINKING = "low"
+# env로 강제(low/high). 비어 있으면 타입 기반 자동.
+_FORCED_THINKING = os.getenv("GEMINI_THINKING_LEVEL", "").strip() or None
+# process_manual_files에서 파일별로 세팅됨(탐지/하위셀 호출이 참조).
+_active_detect_thinking = "high"
+
+
+def _decide_thinking(filename: str, override: str | None) -> str:
+    """탐지/하위셀에 쓸 thinking 레벨 결정. 우선순위: env 강제 > 요청 override > 타입 자동."""
+    if _FORCED_THINKING:
+        return _FORCED_THINKING
+    if override in ("low", "high"):
+        return override
+    ext = filename.lower()
+    if ext.endswith((".png", ".jpg", ".jpeg")):
+        return "low"   # 단일 이미지(종이학 등) = 단순 → 빠름
+    return "high"      # PDF(레고 등 조립 매뉴얼) = 복잡 → 정확
+
+
+def _gen_config(temperature: float = 0, json_out: bool = True, thinking: str | None = None) -> dict:
+    cfg: dict = {"temperature": temperature}
+    if json_out:
+        cfg["responseMimeType"] = "application/json"
+    # thinking 미지정 시 현재 활성 탐지 레벨 사용(번역은 thinking=TRANSLATE_THINKING로 명시).
+    level = thinking if thinking is not None else _active_detect_thinking
+    if level:
+        cfg["thinkingConfig"] = {"thinkingLevel": level}
+    return cfg
+
 
 def reset_preview_state() -> None:
     global _preview_steps, _preview_updated
@@ -46,7 +78,7 @@ async def _translate_to_korean(client: httpx.AsyncClient, text: str) -> str:
             GEMINI_URL,
             json={
                 "contents": [{"parts": [{"text": f"다음 텍스트를 한국어로 번역하세요. 번역문만 출력하고 다른 설명은 하지 마세요.\n\n{text}"}]}],
-                "generationConfig": {"temperature": 0.1},
+                "generationConfig": _gen_config(temperature=0.1, json_out=False, thinking=TRANSLATE_THINKING),
             },
             timeout=15.0,
         )
@@ -57,6 +89,44 @@ async def _translate_to_korean(client: httpx.AsyncClient, text: str) -> str:
     except Exception:
         pass
     return text
+
+
+async def _translate_to_korean_batch(client: httpx.AsyncClient, texts: list) -> list:
+    """외국어가 포함된 항목만 '한 번의 호출'로 한국어 직역. id 기준 되매핑이라 순서/누락에 강함.
+    실패 시 해당 항목은 원문 유지. (단계별 직렬 번역 → 1회 배치로 단축)"""
+    idxs = [i for i, t in enumerate(texts) if t and _has_foreign_text(t)]
+    if not idxs:
+        return list(texts)
+    items = [{"id": i, "text": texts[i]} for i in idxs]
+    prompt = (
+        "다음 JSON 배열의 각 항목 text를 한국어로 '직역'하세요.\n"
+        "- 원문 의미를 그대로 옮기고 요약·의역·내용 추가·생략을 절대 하지 마세요.\n"
+        "- id는 그대로 두고 text만 한국어 번역으로 바꾼, 동일 구조의 JSON 배열만 출력하세요.\n\n"
+        + json.dumps(items, ensure_ascii=False)
+    )
+    out = list(texts)
+    try:
+        res = await client.post(
+            GEMINI_URL,
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": _gen_config(thinking=TRANSLATE_THINKING),
+            },
+            timeout=30.0,
+        )
+        if res.status_code == 200:
+            payload = json.loads(res.json()["candidates"][0]["content"]["parts"][0]["text"])
+            if isinstance(payload, dict):
+                payload = payload.get("translations") or payload.get("items") or payload.get("results") or []
+            if isinstance(payload, list):
+                for it in payload:
+                    if isinstance(it, dict) and isinstance(it.get("id"), int) and it.get("text"):
+                        i = it["id"]
+                        if 0 <= i < len(out):
+                            out[i] = str(it["text"]).strip()
+    except Exception as e:
+        print(f"🚨 배치 번역 실패(원문 유지): {e}")
+    return out
 
 
 def extract_gemini_steps(response_json: dict) -> list:
@@ -78,7 +148,10 @@ def extract_gemini_steps(response_json: dict) -> list:
     normalized = []
     for item in raw_steps:
         if isinstance(item, dict):
-            normalized.append(item)
+            if isinstance(item.get("steps"), list):  # 리스트로 감싼 {"steps":[...]} 언랩
+                normalized.extend(x for x in item["steps"] if isinstance(x, dict))
+            else:
+                normalized.append(item)
         elif isinstance(item, list):
             normalized.extend(x for x in item if isinstance(x, dict))
     return normalized
@@ -235,7 +308,7 @@ async def _detect_cells_in_strip(client, strip_path: str) -> list:
             GEMINI_URL,
             json={
                 "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
-                "generationConfig": {"responseMimeType": "application/json"},
+                "generationConfig": _gen_config(),
             },
             timeout=60.0,
         )
@@ -353,7 +426,7 @@ async def analyze_picture_page(client, page_img_path: str, page_num: int, job_di
                 GEMINI_URL,
                 json={
                     "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
-                    "generationConfig": {"responseMimeType": "application/json"},
+                    "generationConfig": _gen_config(),
                 },
                 timeout=60.0,
             )
@@ -418,6 +491,11 @@ async def analyze_picture_page(client, page_img_path: str, page_num: int, job_di
             key=lambda s: (s["box_2d"][0] // 100, s["box_2d"][1]) if s.get("box_2d") else (999, 999)
         )
 
+        # 외국어 desc는 1회 배치 호출로 직역(단계별 직렬 번역 제거)
+        descs = await _translate_to_korean_batch(
+            client, [s.get("desc", "").strip() or f"조립 단계 {i + 1}" for i, s in enumerate(ordered)]
+        )
+
         steps = []
         with Image.open(page_img_path) as full_img:
             import numpy as np
@@ -425,7 +503,7 @@ async def analyze_picture_page(client, page_img_path: str, page_num: int, job_di
                 box = s.get("box_2d")
                 if not box:
                     continue
-                desc = s.get("desc", "").strip() or f"조립 단계 {i + 1}"
+                desc = descs[i]
                 ymin, xmin, ymax, xmax = box
                 left   = max(0,      int(xmin * orig_w / 1000))
                 top    = max(0,      int(ymin * orig_h / 1000))
@@ -439,8 +517,6 @@ async def analyze_picture_page(client, page_img_path: str, page_num: int, job_di
                 if np.array(crop_img).std() < 12:
                     continue
 
-                if _has_foreign_text(desc):
-                    desc = await _translate_to_korean(client, desc)
                 crop_path = os.path.join(job_dir, f"pic_p{page_num}_{i}_{int(time.time() * 1000)}.jpg")
                 crop_img.save(crop_path, "JPEG", quality=92)
                 steps.append({
@@ -457,29 +533,35 @@ async def analyze_picture_page(client, page_img_path: str, page_num: int, job_di
         return []
 
 
-def _clip_box_against(box: list, others: list) -> list:
-    """box(0~1000)가 다른 검출 항목(others)의 중심을 포함하지 않도록 우/하단을 안쪽으로 클립.
-    Gemini가 한 STEP 박스를 과도하게 크게 그려 오른쪽 열/아래 STEP을 삼키는 것을 방지.
-    매뉴얼은 좌→우, 위→아래로 흐르므로 STEP 번호는 박스의 좌상단에 있다고 가정."""
-    ymin, xmin, ymax, xmax = box
-    # 안쪽에 들어온 항목을 위치 기준(오른쪽 열 우선, 그다음 아래)으로 정렬해 가까운 것부터 클립
-    inside = []
-    for oy0, ox0, oy1, ox1 in others:
-        ocx, ocy = (ox0 + ox1) / 2, (oy0 + oy1) / 2
-        if xmin < ocx < xmax and ymin < ocy < ymax:
-            inside.append((oy0, ox0, oy1, ox1))
-    for oy0, ox0, oy1, ox1 in sorted(inside, key=lambda t: (t[1], t[0])):
-        ocx, ocy = (ox0 + ox1) / 2, (oy0 + oy1) / 2
-        if not (xmin < ocx < xmax and ymin < ocy < ymax):
-            continue  # 앞선 클립으로 이미 박스 밖이면 건너뜀
-        if ox0 - xmin > 150:      # 항목이 뚜렷이 오른쪽에서 시작 → 다른 열 → 우측 클립
-            xmax = min(xmax, ox0)
-        elif oy0 - ymin > 80:     # 항목이 아래에서 시작 → 아래 STEP/셀 → 하단 클립
-            ymax = min(ymax, oy0)
-        # else: 좌상단 근처와 겹침 → 안전하게 클립하지 않음
-    if xmax - xmin < 20 or ymax - ymin < 20:
-        return box  # 과도 축소 시 원본 유지
-    return [ymin, xmin, ymax, xmax]
+def _crop_col_slice(page_img_path: str, x0: int, x1: int, ytop_1000: int, ybot_1000, job_dir: str, tag: str) -> str | None:
+    """메인 STEP 이미지를 '자기 열 슬라이스'로 크롭한다.
+    x0,x1=열 가로 px / ytop_1000=시작 y(0~1000) / ybot_1000=끝 y(0~1000, None이면 끝까지).
+    Gemini의 들쭉날쭉한 메인 박스 대신 열 전체 슬라이스를 써서 하위셀을 모두 포함시킨다."""
+    try:
+        import numpy as np
+        with Image.open(page_img_path) as im:
+            w, h = im.size
+            rgb = im.convert("RGB")
+        x0, x1 = max(0, int(x0)), min(w, int(x1))
+        top = max(0, int(ytop_1000 * h / 1000) - int(h * 0.01))  # 번호가 잘리지 않게 살짝 위
+        bot = h if ybot_1000 is None else min(h, int(ybot_1000 * h / 1000))
+        if x1 - x0 < w * 0.04 or bot - top < h * 0.02:
+            return None
+        region = rgb.crop((x0, top, x1, bot))
+        arr = np.array(region)
+        # 상하 여백 트림
+        rows = np.where(arr.std(axis=(1, 2)) > 12)[0]
+        if rows.size == 0:
+            return None
+        region = region.crop((0, int(rows[0]), region.width, int(rows[-1]) + 1))
+        if region.width < 8 or region.height < 8:
+            return None
+        out = os.path.join(job_dir, f"{tag}_{int(time.time() * 1000)}.jpg")
+        region.save(out, "JPEG", quality=92)
+        return f"/outputs/{os.path.relpath(out, OUTPUT_DIR)}".replace("\\", "/")
+    except Exception as e:
+        print(f"🚨 열 슬라이스 크롭 실패 ({tag}): {e}")
+        return None
 
 
 async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: str) -> list:
@@ -512,7 +594,7 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             GEMINI_URL,
             json={
                 "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}]}],
-                "generationConfig": {"responseMimeType": "application/json"},
+                "generationConfig": _gen_config(),
             },
             timeout=60.0,
         )
@@ -520,19 +602,18 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             return []
 
         raw_steps = extract_gemini_steps(res.json())
-        all_boxes = [s["box_2d"] for s in raw_steps if s.get("box_2d")]
+        # 외국어 desc는 1회 배치 호출로 직역(단계별 직렬 번역 제거)
+        descs = await _translate_to_korean_batch(
+            client, [s.get("desc", "").strip() or f"STEP {s.get('step_number', '?')} 조립" for s in raw_steps]
+        )
         steps = []
         with Image.open(page_img_path) as full_img:
             for idx, s in enumerate(raw_steps):
                 box = s.get("box_2d")
                 if not box:
                     continue
-                desc = s.get("desc", "").strip()
-                if not desc:
-                    desc = f"STEP {s.get('step_number', '?')} 조립"
-                # 다른 검출 항목을 삼키지 않도록 박스 클립(거대 박스 보정)
-                others = [b for b in all_boxes if b is not box]
-                ymin, xmin, ymax, xmax = _clip_box_against(box, others)
+                desc = descs[idx]
+                ymin, xmin, ymax, xmax = box
                 left = max(0, int(xmin * orig_w / 1000))
                 top = max(0, int(ymin * orig_h / 1000))
                 right = min(orig_w, int(xmax * orig_w / 1000))
@@ -541,8 +622,6 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
                     continue
 
                 step_num = s.get("step_number", 0)
-                if _has_foreign_text(desc):
-                    desc = await _translate_to_korean(client, desc)
 
                 # idx를 파일명에 포함 — 같은 페이지에 같은 번호 셀이 여러 개여도 충돌 방지
                 crop_path = os.path.join(job_dir, f"step_p{page_num}_{step_num}_{idx}.jpg")
@@ -591,7 +670,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
             GEMINI_URL,
             json={
                 "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}]}],
-                "generationConfig": {"responseMimeType": "application/json"},
+                "generationConfig": _gen_config(),
             },
             timeout=60.0,
         )
@@ -599,13 +678,15 @@ async def detect_and_crop_image(client, img_path, base_idx):
             return []
 
         raw_steps = extract_gemini_steps(res.json())
+        # 외국어 desc는 1회 배치 호출로 직역(단계별 직렬 번역 제거)
+        descs = await _translate_to_korean_batch(client, [s.get("desc", "").strip() for s in raw_steps])
         job_dir = os.path.dirname(img_path)
         steps = []
         with Image.open(img_path) as full_img:
             orig_w, orig_h = full_img.size
-            for s in raw_steps:
+            for idx, s in enumerate(raw_steps):
                 box = s.get("box_2d")
-                desc = s.get("desc", "").strip()
+                desc = descs[idx]
                 if not box or not desc:
                     continue
                 ymin, xmin, ymax, xmax = box
@@ -616,8 +697,6 @@ async def detect_and_crop_image(client, img_path, base_idx):
                 if right <= left or bottom <= top:
                     continue
                 step_num = s.get("step_number") or (base_idx + len(steps) + 1)
-                if _has_foreign_text(desc):
-                    desc = await _translate_to_korean(client, desc)
 
                 crop_path = os.path.join(job_dir, f"img_step_{step_num}_{int(time.time() * 1000)}.jpg")
                 full_img.crop((left, top, right, bottom)).convert("RGB").save(crop_path, "JPEG", quality=92)
@@ -679,18 +758,31 @@ async def _run_text_pipeline(client, page_imgs: list, job_dir: str) -> list:
                     print(f"  🔗 STEP {prev_main['step']} ← page{pi+1} 전체 연속 병합")
             continue
 
-        # 각 메인 STEP을 박스 중심 x 기준으로 열에 배정
+        # 각 메인 STEP을 박스 왼쪽(xmin) 기준으로 열에 배정.
+        # STEP 번호는 박스 좌상단에 있으므로, 박스가 여러 열에 걸쳐도 번호가 있는 열로 배정됨.
         def _col_idx(box):
             b = box or [0, 0, 0, 0]
-            cx = ((b[1] + b[3]) / 2) / 1000 * w_pg
+            x = b[1] / 1000 * w_pg
             for i, (a, bnd) in enumerate(cols):
-                if a <= cx < bnd:
+                if a <= x < bnd:
                     return i
-            return len(cols) - 1
+            return 0 if x < cols[0][0] else len(cols) - 1
 
         mains_by_col: dict = {}
         for m in new_mains:
             mains_by_col.setdefault(_col_idx(m.get("_box")), []).append(m)
+
+        # 메인 STEP 이미지를 '자기 열 슬라이스'로 재크롭(번호 위치~다음 메인 전까지).
+        # Gemini의 들쭉날쭉한 메인 박스 대신 열 전체를 써서 하위셀을 모두 포함 → 분할 안정화.
+        for ci, ms in mains_by_col.items():
+            x0, x1 = cols[ci]
+            ms_sorted = sorted(ms, key=lambda m: (m.get("_box") or [0])[0])
+            for j, m in enumerate(ms_sorted):
+                ytop = (m.get("_box") or [0, 0, 0, 0])[0]
+                ybot = (ms_sorted[j + 1].get("_box") or [0, 0, 0, 0])[0] if j + 1 < len(ms_sorted) else None
+                new_url = _crop_col_slice(page_path, x0, x1, ytop, ybot, job_dir, f"step_p{pi+1}_{m['step']}")
+                if new_url:
+                    m["image_url"] = new_url
 
         # 열을 좌→우로 보며, 메인이 없는 '빈 열'을 연속으로 귀속:
         #  - 왼쪽에 이 페이지 메인이 있으면 그 메인의 우측 연속
@@ -722,8 +814,8 @@ async def _run_text_pipeline(client, page_imgs: list, job_dir: str) -> list:
     return all_steps
 
 
-async def process_manual_files(files: List[UploadFile], picture_mode: bool = False):
-    global _analysis_start_time, _preview_steps, _preview_updated
+async def process_manual_files(files: List[UploadFile], picture_mode: bool = False, thinking_override: str | None = None):
+    global _analysis_start_time, _preview_steps, _preview_updated, _active_detect_thinking
     start_time = time.time()
     _analysis_start_time = start_time
     _preview_steps = []
@@ -750,6 +842,10 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
             ext = upload.filename.lower()
             state["file_info"]["name"] = upload.filename
             state["uploaded_preview"] = ""
+
+            # 탐지/하위셀 thinking 레벨: 파일 타입 자동 + 요청 override(번역은 항상 low 유지)
+            _active_detect_thinking = _decide_thinking(upload.filename, thinking_override)
+            print(f"🧠 탐지 thinking={_active_detect_thinking} ({upload.filename})")
 
             if ext.endswith(".pdf"):
                 subprocess.run(

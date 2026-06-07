@@ -56,8 +56,18 @@ def register_routes(app: FastAPI) -> None:
         )
 
     @app.post("/process-manual")
-    async def handle_manual(files: List[UploadFile] = File(...), picture: str = Form("false")):
-        return await process_manual_files(files, picture_mode=(picture.lower() == "true"))
+    async def handle_manual(
+        files: List[UploadFile] = File(...),
+        picture: str = Form("false"),
+        quality: str = Form("auto"),
+    ):
+        # quality: auto(타입 자동) | fast(low) | accurate(high)
+        override = {"fast": "low", "accurate": "high"}.get(quality.lower())
+        return await process_manual_files(
+            files,
+            picture_mode=(picture.lower() == "true"),
+            thinking_override=override,
+        )
 
     @app.post("/set-step")
     async def set_step(body: dict):
