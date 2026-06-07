@@ -4,7 +4,7 @@ import re
 import time
 from typing import List
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from config import LIVEKIT_URL, MOBILE_TOKEN, PC_TOKEN, VLM_JPEG_QUALITY
@@ -56,8 +56,8 @@ def register_routes(app: FastAPI) -> None:
         )
 
     @app.post("/process-manual")
-    async def handle_manual(files: List[UploadFile] = File(...)):
-        return await process_manual_files(files)
+    async def handle_manual(files: List[UploadFile] = File(...), picture: str = Form("false")):
+        return await process_manual_files(files, picture_mode=(picture.lower() == "true"))
 
     @app.post("/set-step")
     async def set_step(body: dict):
