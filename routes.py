@@ -1,4 +1,6 @@
 import asyncio
+import glob
+import json
 import os
 import re
 import time
@@ -7,7 +9,7 @@ from typing import List
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from config import LIVEKIT_URL, MOBILE_TOKEN, PC_TOKEN, VLM_JPEG_QUALITY
+from config import LIVEKIT_URL, MOBILE_TOKEN, OUTPUT_DIR, PC_TOKEN, VLM_JPEG_QUALITY
 from manual import get_elapsed_time, preview_event_stream, process_manual_files, reset_preview_state
 from state import SESSION_FILE, clear_frame_state, clear_vlm_timing, save_session, state
 from vlm import (
@@ -87,6 +89,109 @@ def register_routes(app: FastAPI) -> None:
         state["step_locked"] = locked
         save_session()
         return {"status": "ok", "current_step_idx": idx}
+
+    def _session_dir_from_steps():
+        """현재 manual_steps의 image_url에서 세션 디렉터리(outputs/sess_X)를 유도."""
+        for s in state.get("manual_steps", []):
+            url = s.get("image_url", "")
+            if "/outputs/" in url:
+                seg = url.split("/outputs/", 1)[-1].split("/")[0]
+                return os.path.join(OUTPUT_DIR, seg)
+        return None
+
+    @app.get("/source-pages")
+    async def source_pages():
+        """보정(다시 자르기)용 원본 페이지 이미지 목록."""
+        sess = _session_dir_from_steps()
+        urls: list = []
+        if sess:
+            pages_dir = os.path.join(sess, "pages")
+            if os.path.isdir(pages_dir):
+                for f in sorted(glob.glob(os.path.join(pages_dir, "page-*.jpg"))):
+                    urls.append(f"/outputs/{os.path.relpath(f, OUTPUT_DIR)}".replace("\\", "/"))
+            if not urls:  # 단일 이미지 업로드 등 → 세션 내 원본 이미지
+                for ext in ("*.png", "*.jpg", "*.jpeg"):
+                    for f in sorted(glob.glob(os.path.join(sess, ext))):
+                        if "/sub_" in f or "step_p" in f or "_crop_" in f or "cont_" in f or "thumb" in f:
+                            continue
+                        urls.append(f"/outputs/{os.path.relpath(f, OUTPUT_DIR)}".replace("\\", "/"))
+        return {"pages": urls}
+
+    @app.post("/crop-region")
+    async def crop_region(body: dict):
+        """원본 페이지에서 정규화 박스(0~1) 영역을 잘라 새 이미지 생성(PIL, 외부 API 미사용)."""
+        page_url = body.get("page", "")
+        box = body.get("box")
+        if not page_url or not isinstance(box, list) or len(box) != 4:
+            return {"status": "error", "message": "page와 box[x0,y0,x1,y1](0~1) 필요"}
+        rel = page_url.split("/outputs/", 1)[-1]
+        page_fs = os.path.join(OUTPUT_DIR, rel)
+        if not os.path.exists(page_fs):
+            return {"status": "error", "message": "페이지 이미지 없음"}
+        try:
+            from PIL import Image
+            x0, y0, x1, y1 = [float(v) for v in box]
+            with Image.open(page_fs) as im:
+                w, h = im.size
+                left, top = int(min(x0, x1) * w), int(min(y0, y1) * h)
+                right, bottom = int(max(x0, x1) * w), int(max(y0, y1) * h)
+                if right - left < 6 or bottom - top < 6:
+                    return {"status": "error", "message": "영역이 너무 작습니다"}
+                seg = rel.split("/")[0]
+                out_dir = os.path.join(OUTPUT_DIR, seg)
+                out = os.path.join(out_dir, f"manual_crop_{int(time.time() * 1000)}.jpg")
+                im.crop((left, top, right, bottom)).convert("RGB").save(out, "JPEG", quality=92)
+            url = f"/outputs/{os.path.relpath(out, OUTPUT_DIR)}".replace("\\", "/")
+            return {"status": "ok", "image_url": url}
+        except Exception as e:
+            return {"status": "error", "message": f"크롭 실패: {type(e).__name__}: {e}"}
+
+    @app.post("/edit-manual-steps")
+    async def edit_manual_steps(body: dict):
+        """편집된 STEP 목록으로 교체(삭제/순서이동/재라벨/다시자른 항목 포함).
+        라벨은 메인 STEP별로 N-1, N-2 … 재부여. 저장 후 코칭이 그대로 사용(추론은 이미지 변경 시 자동 재등록)."""
+        steps = body.get("steps")
+        if not isinstance(steps, list) or not steps:
+            return {"status": "error", "message": "steps(목록) 필요"}
+        clean: list = []
+        for s in steps:
+            if not isinstance(s, dict) or not s.get("image_url"):
+                continue
+            clean.append(s)
+        if not clean:
+            return {"status": "error", "message": "유효한 STEP이 없습니다"}
+
+        # 메인 STEP별 하위 라벨 재부여(같은 step 번호 그룹 안에서 1,2,3…)
+        from collections import defaultdict
+        counts: dict = defaultdict(int)
+        totals: dict = defaultdict(int)
+        for s in clean:
+            totals[s.get("step")] += 1
+        for s in clean:
+            st = s.get("step")
+            if totals[st] > 1:
+                counts[st] += 1
+                s["sub"] = counts[st]
+                s["label"] = f"{st}-{counts[st]}"
+            else:
+                s.pop("sub", None)
+                s.pop("label", None)
+
+        state["manual_steps"] = clean
+        state["file_info"]["steps"] = len(clean)
+        state["current_step_idx"] = max(0, min(state.get("current_step_idx", 0), len(clean) - 1))
+        # 편집된 이미지가 추론서버에 다시 등록되도록 등록 캐시 비움(안전)
+        REGISTERED_STEP_IDS.clear()
+        WARMED_STEP_IDS.clear()
+        save_session()
+        sess = _session_dir_from_steps()
+        if sess:
+            try:
+                with open(os.path.join(sess, "instruction.json"), "w", encoding="utf-8") as f:
+                    json.dump(clean, f, ensure_ascii=False, indent=4)
+            except Exception:
+                pass
+        return {"status": "ok", "count": len(clean)}
 
     @app.get("/status")
     async def get_status():

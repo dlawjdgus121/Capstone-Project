@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import statistics
 import subprocess
 import time
 from typing import List
@@ -587,7 +588,8 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             "[무시할 것]\n"
             "- 노란색/강조색 인셋 박스 안의 작은 번호(1, 2, 3…) — 부품 픽업 순서이며 메인 단계가 아님\n"
             "- 큰 STEP 번호 없이 그림만 있는 셀(이전 페이지에서 이어지는 연속 부분) — 반환하지 마세요\n"
-            "- 로고, 브랜드, 표지, 저작권 문구\n\n"
+            "- 'CREATOR 3 in 1', 'N in 1' 같은 제품 배지의 숫자(예: 3 in 1의 3)는 STEP이 아님 — 절대 STEP으로 반환 금지\n"
+            "- 표지의 완성 모델 사진, 부품 목록, 로고, 브랜드, 저작권 문구\n\n"
             '{"steps":[{"step_number":int,"title":"STEP N","desc":"설명","box_2d":[int,int,int,int]}]}'
         )
 
@@ -732,10 +734,37 @@ async def _run_picture_pipeline(client, page_imgs: list, job_dir: str) -> list:
     return steps
 
 
+_DETECT_PASSES = 3  # 페이지당 메인 탐지 반복 횟수(다수결로 무작위성 완화). 느려도 정확도 우선.
+
+
+async def _detect_page_consensus(client, page_img_path: str, page_num: int, job_dir: str) -> list:
+    """같은 페이지를 여러 번 탐지해 '다수결'로 메인 STEP을 확정.
+    - 과반(>=2/3)의 패스에서 나온 STEP 번호만 채택 → 1회성 오검출(표지 배지 등)·누락 완화
+    - 박스는 패스들의 '중앙값'으로 → 가끔 튀는 거대/빈 박스 영향 제거"""
+    passes = await asyncio.gather(
+        *[analyze_pdf_page(client, page_img_path, page_num, job_dir) for _ in range(_DETECT_PASSES)]
+    )
+    by_num: dict = {}
+    for ps in passes:
+        for s in ps:
+            if s.get("_box"):
+                by_num.setdefault(s["step"], []).append(s)
+    need = _DETECT_PASSES // 2 + 1  # 과반
+    merged: list = []
+    for num, items in by_num.items():
+        if len(items) < need:
+            continue  # 소수 패스에서만 나온 건 노이즈로 간주(표지의 '3 in 1' 등)
+        med = [int(statistics.median(it["_box"][k] for it in items)) for k in range(4)]
+        rep = min(items, key=lambda it: sum(abs(it["_box"][k] - med[k]) for k in range(4)))
+        merged.append(dict(rep, _box=med))
+    print(f"  🗳️ page{page_num} 다수결 메인: {sorted(m['step'] for m in merged)}")
+    return merged
+
+
 async def _run_text_pipeline(client, page_imgs: list, job_dir: str) -> list:
-    """텍스트형 파이프라인: 페이지별 메인 STEP 탐지 + 단조 증가 필터 + 열 단위 연속 병합."""
+    """텍스트형 파이프라인: 페이지별 메인 STEP 다수결 탐지 + 단조 증가 필터 + 열 단위 연속 병합."""
     results = await asyncio.gather(
-        *[analyze_pdf_page(client, p, i + 1, job_dir) for i, p in enumerate(page_imgs)]
+        *[_detect_page_consensus(client, p, i + 1, job_dir) for i, p in enumerate(page_imgs)]
     )
     all_steps: list = []
     last_step = 0
@@ -747,10 +776,16 @@ async def _run_text_pipeline(client, page_imgs: list, job_dir: str) -> list:
         return (b[1], b[0])
 
     for pi, page_steps in enumerate(results):
-        ordered = sorted(page_steps, key=_read_order)
-        new_mains = [s for s in ordered if s.get("step", 0) > last_step]
         page_path = page_imgs[pi]
         w_pg, cl, cr, cols = _detect_columns(page_path)
+
+        # 콘텐츠 영역 왼쪽(여백/표지)에서 잡힌 검출은 STEP이 아님(예: 표지 'CREATOR 3 in 1' 배지) → 제외
+        def _in_margin(s):
+            b = s.get("_box")
+            return bool(b) and ((b[1] + b[3]) / 2) / 1000 * w_pg < cl
+
+        ordered = sorted([s for s in page_steps if not _in_margin(s)], key=_read_order)
+        new_mains = [s for s in ordered if s.get("step", 0) > last_step]
 
         # 메인 STEP이 전혀 없는 페이지 = 통째로 직전 STEP의 연속
         if not new_mains:
@@ -783,7 +818,11 @@ async def _run_text_pipeline(client, page_imgs: list, job_dir: str) -> list:
             for j, m in enumerate(ms_sorted):
                 ytop = (m.get("_box") or [0, 0, 0, 0])[0]
                 ybot = (ms_sorted[j + 1].get("_box") or [0, 0, 0, 0])[0] if j + 1 < len(ms_sorted) else None
-                new_url = _crop_col_slice(page_path, x0, x1, ytop, ybot, job_dir, f"step_p{pi+1}_{m['step']}")
+                # 슬라이스 왼쪽 끝은 '열 왼쪽'과 'STEP 번호(박스 xmin)' 중 더 오른쪽으로 →
+                # 같은 열 왼쪽에 표지/딴 블록이 있어도 STEP 콘텐츠만 잘림(예: page1 표지)
+                bx = int((m.get("_box") or [0, 0, 0, 0])[1] / 1000 * w_pg)
+                sx0 = max(x0, bx)
+                new_url = _crop_col_slice(page_path, sx0, x1, ytop, ybot, job_dir, f"step_p{pi+1}_{m['step']}")
                 if new_url:
                     m["image_url"] = new_url
 
