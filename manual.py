@@ -833,6 +833,9 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
             "pass_hold_until": 0.0,
             "pass_transition_id": 0,
             "progress_step": "done",
+            "camera_setup_done": False,
+            "camera_setup_active": False,
+            "camera_setup_phase": "idle",
         }
     )
     save_session()

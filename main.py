@@ -1,6 +1,7 @@
 ﻿import asyncio
 import os
 import re as _re
+import socket
 import subprocess
 import threading
 from contextlib import asynccontextmanager, suppress
@@ -10,9 +11,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from config import CLOUDFLARED_BIN, OUTPUT_DIR, PRELOAD_MANUAL_STEPS, RUNPOD_INFERENCE_BASE_URL
+from config import CLOUDFLARED_BIN, ESP32_IP, OUTPUT_DIR, PRELOAD_MANUAL_STEPS, RUNPOD_INFERENCE_BASE_URL, UDP_PORT
 from routes import register_routes
-from state import load_session, state
+from state import hw_state, load_session, state
 from vlm import (
     REGISTERED_STEP_IDS,
     WARMED_STEP_IDS,
@@ -23,10 +24,24 @@ from vlm import (
 )
 
 
+def align_servo_to_center() -> None:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b"P90.0T90.0", (ESP32_IP, UDP_PORT))
+        hw_state["current_pan"] = 90.0
+        hw_state["current_tilt"] = 90.0
+        hw_state["smooth_pan"] = 90.0
+        hw_state["smooth_tilt"] = 90.0
+        print("[SERVO] startup align pan=90.0deg, tilt=90.0deg")
+    except Exception as e:
+        print(f"[SERVO] startup align failed: {type(e).__name__}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     restored = load_session()
     ensure_runpod_http_client()
+    align_servo_to_center()
 
     if restored and PRELOAD_MANUAL_STEPS and RUNPOD_INFERENCE_BASE_URL and state.get("manual_steps"):
         REGISTERED_STEP_IDS.clear()
@@ -90,6 +105,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 register_routes(app)
 

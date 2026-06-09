@@ -879,6 +879,10 @@ function PCView() {
     const prevActiveIdx = useRef(0);
 
     const [isNewStart, setIsNewStart] = React.useState(false);
+    const [showCameraSetupPrompt, setShowCameraSetupPrompt] = useState(false);
+    const [cameraSetupCompleteNotice, setCameraSetupCompleteNotice] = useState(false);
+    const cameraSetupPromptedRef = useRef(false);
+    const cameraSetupCompleteShownRef = useRef(false);
 
     /* QR 코드 생성 — view가 바뀔 때마다 재실행해서 터널 URL 반영 */
     useEffect(() => {
@@ -1004,6 +1008,40 @@ function PCView() {
             setLiveElapsed(liveElapsedRef.current);  // 마지막 값 유지
         }
     }, [status.has_frame, view]);
+
+    useEffect(() => {
+        if (view !== 'coach') {
+            cameraSetupPromptedRef.current = false;
+            cameraSetupCompleteShownRef.current = false;
+            setShowCameraSetupPrompt(false);
+            setCameraSetupCompleteNotice(false);
+            return;
+        }
+        if (!status.has_frame) {
+            cameraSetupPromptedRef.current = false;
+            cameraSetupCompleteShownRef.current = false;
+            setShowCameraSetupPrompt(false);
+            setCameraSetupCompleteNotice(false);
+            return;
+        }
+        if (!cameraSetupPromptedRef.current && !status.camera_setup_done) {
+            cameraSetupPromptedRef.current = true;
+            setShowCameraSetupPrompt(true);
+        }
+    }, [status.has_frame, status.camera_setup_done, view]);
+
+    const startCameraSetup = useCallback(() => {
+        setShowCameraSetupPrompt(false);
+        fetch('/start-camera-setup', {method:'POST'}).catch(()=>{});
+    }, []);
+
+    useEffect(() => {
+        if (view !== 'coach' || !status.camera_setup_done || cameraSetupCompleteShownRef.current) return;
+        cameraSetupCompleteShownRef.current = true;
+        setCameraSetupCompleteNotice(true);
+        const t = setTimeout(() => setCameraSetupCompleteNotice(false), 1500);
+        return () => clearTimeout(t);
+    }, [status.camera_setup_done, view]);
 
     useEffect(() => {
         if (view !== 'coach' || !status.has_frame) return;  // 카메라 연결 시에만 카운트
@@ -1269,10 +1307,31 @@ function PCView() {
         return () => { clearInterval(pingIntervalRef.current); pingIntervalRef.current = null; };
     }, [view]);
 
+    /* 화면 전환 시 카메라 세팅 메시지 초기화 */
+    useEffect(() => {
+        if (view !== 'coach') {
+            const resetCamera = async () => {
+                try {
+                    await fetch('/reset-camera-setup', { method:'POST' }).catch(() => {});
+                } catch(e) {}
+            };
+            resetCamera();
+        }
+    }, [view]);
+
     /* keyboard nav */
     useEffect(() => {
         if (view !== 'coach') return;
-        const h = e => { if (modalImg) return; if (e.key==='ArrowRight') goToNext(); if (e.key==='ArrowLeft') goToPrev(); };
+        const h = e => {
+            if ((e.key.toLowerCase()==='s' || e.key==='ㄴ') && !e.repeat) {
+                fetch('/stop-stepper', { method:'POST' }).catch(() => {});
+                return;
+            }
+            if (modalImg) return;
+            if (e.key==='ArrowRight') goToNext();
+            if (e.key==='ArrowLeft') goToPrev();
+            if (e.key.toLowerCase()==='l' && !e.repeat) fetch('/servo-angle', { method:'POST' }).catch(() => {});
+        };
         window.addEventListener('keydown', h);
         return () => window.removeEventListener('keydown', h);
     }, [view, goToNext, goToPrev, modalImg]);
@@ -1295,8 +1354,25 @@ function PCView() {
         gestureHolding && activeGesture === 'HOLDING_DOWN' ? '리니어슬라이드 하강 인식 중' :
         null;
     const safeTrackingNotice = status.tracking_active === false ? '손 추적 OFF' : '손 추적 ON';
-    const topRightNotice = safeHoldingNotice || hwNotice || safePersistentHardwareNotice || safeTrackingNotice;
-    const hardwareBoxActive = !!(safeHoldingNotice || hwNotice || safePersistentHardwareNotice);
+    const cameraSetupNotice =
+        cameraSetupCompleteNotice ? '카메라 세팅이 완료됐습니다. 코칭을 시작합니다' :
+        status.camera_setup_active ? (status.camera_setup_message || '카메라 초기 세팅 중') :
+        null;
+    const topRightNotice = cameraSetupNotice || safeHoldingNotice || hwNotice || safePersistentHardwareNotice || safeTrackingNotice;
+    const hardwareBoxActive = !!(cameraSetupNotice || safeHoldingNotice || hwNotice || safePersistentHardwareNotice);
+    const cameraSetupPhase = status.camera_setup_phase || 'idle';
+    const cameraSetupCountdown = Number(status.camera_setup_countdown || 0);
+    const cameraSetupGuideTitle =
+        cameraSetupCompleteNotice ? '카메라 세팅이 완료됐습니다. 코칭을 시작합니다' :
+        status.camera_setup_active && cameraSetupPhase === 'linear' ? '초기설정을 시작합니다' :
+        status.camera_setup_active && cameraSetupPhase === 'hands_prompt' ? '양손을 작업대에 올려주세요' :
+        status.camera_setup_active && cameraSetupPhase === 'pantilt' ? '카메라 각도를 조정합니다' :
+        null;
+    const cameraSetupGuideBody =
+        status.camera_setup_active && cameraSetupPhase === 'linear' ? '어깨 정렬선에 맞춰 리니어슬라이드를 하강합니다.' :
+        status.camera_setup_active && cameraSetupPhase === 'hands_prompt' ? '양손 전체가 보이도록 작업대 위에 올려주세요.' :
+        status.camera_setup_active && cameraSetupPhase === 'pantilt' ? '양 손을 작업대에 올려주세요.' :
+        '';
 
     useEffect(() => {
         if (!gestureHolding) {
@@ -1346,6 +1422,94 @@ function PCView() {
 
     return (
         <div style={{minHeight:'100vh', background:'var(--bg)', position:'relative'}}>
+
+            {view === 'coach' && showCameraSetupPrompt && (
+                <div className="modal-back">
+                    <div style={{
+                        width:'min(420px, calc(100vw - 36px))',
+                        border:'1px solid var(--line)',
+                        borderRadius:8,
+                        background:'var(--panel)',
+                        padding:22,
+                        boxShadow:'0 24px 80px rgba(0,0,0,0.35)',
+                    }}>
+                        <div style={{fontSize:18, fontWeight:700, color:'var(--ink)', marginBottom:10}}>
+                            카메라를 거치대에 끼워주세요
+                        </div>
+                        <div style={{fontSize:13, lineHeight:1.6, color:'var(--ink-3)', marginBottom:18}}>
+                            카메라 거치가 완료되면 OK 버튼을 눌러 초기설정을 시작합니다.
+                        </div>
+                        <button className="btn primary" onClick={startCameraSetup} style={{width:'100%', justifyContent:'center'}}>
+                            OK
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {view === 'coach' && cameraSetupGuideTitle && !showCameraSetupPrompt && (
+                <div style={{
+                    position:'fixed',
+                    top:22,
+                    left:'50%',
+                    transform:'translateX(-50%)',
+                    zIndex:900,
+                    width:'min(460px, calc(100vw - 36px))',
+                    border:'1px solid var(--line)',
+                    borderRadius:8,
+                    background:'rgba(255,255,255,0.96)',
+                    padding:20,
+                    boxShadow:'0 24px 80px rgba(0,0,0,0.22)',
+                    textAlign:'center',
+                    pointerEvents:'none',
+                }}>
+                    <div style={{fontSize:18, fontWeight:800, color:'var(--ink)', marginBottom:8}}>
+                        {cameraSetupGuideTitle}
+                    </div>
+                    {cameraSetupGuideBody && (
+                        <div style={{fontSize:13, lineHeight:1.6, color:'var(--ink-3)'}}>
+                            {cameraSetupGuideBody}
+                        </div>
+                    )}
+                    {cameraSetupCountdown > 0 && (
+                        <div className="mono" style={{fontSize:34, fontWeight:800, color:'var(--accent)', marginTop:12}}>
+                            {cameraSetupCountdown}
+                        </div>
+                    )}
+                    {(cameraSetupPhase === 'hands_prompt' || cameraSetupPhase === 'pantilt') && status.camera_setup_active && (
+                        <div style={{
+                            margin:'16px auto 0',
+                            width:'min(300px, 100%)',
+                            height:88,
+                            border:'1px solid var(--line)',
+                            borderRadius:8,
+                            background:'var(--bg)',
+                            position:'relative',
+                            display:'flex',
+                            alignItems:'center',
+                            justifyContent:'center',
+                            gap:24,
+                        }}>
+                            <div style={{
+                                width:'100%',
+                                display:'flex',
+                                alignItems:'center',
+                                justifyContent:'center',
+                                paddingTop:6,
+                            }}>
+                                <div style={{width:120, height:98}}>
+                                    <img src="/assets/svg_thumb.png" alt="hand" style={{
+                                        width:'100%',
+                                        height:'100%',
+                                        objectFit:'contain',
+                                        display:'block',
+                                        margin:'0 auto'
+                                    }}/>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* 스텝 툴팁 — fixed 위치로 overflow 영향 없음 */}
             {hoveredStep && (
@@ -1693,6 +1857,36 @@ function PCView() {
                                            display: streamAlive ? 'block' : 'none',
                                            transform: mirrorOn ? 'scaleX(-1)' : 'none',
                                        }}/>
+                                {streamAlive && status.camera_setup_active && cameraSetupPhase === 'linear' && (
+                                    <div style={{
+                                        position:'absolute',
+                                        left:0,
+                                        right:0,
+                                        top:`${Math.round(Number(status.camera_setup_shoulder_line_y || 0.48) * 100)}%`,
+                                        zIndex:22,
+                                        pointerEvents:'none',
+                                    }}>
+                                        <div style={{
+                                            height:0,
+                                            borderTop:'2px solid rgba(255,255,255,0.96)',
+                                            boxShadow:'0 0 0 1px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.35)',
+                                        }}/>
+                                        <div className="mono" style={{
+                                            position:'absolute',
+                                            left:14,
+                                            top:-26,
+                                            padding:'5px 8px',
+                                            borderRadius:6,
+                                            background:'rgba(255,255,255,0.94)',
+                                            color:'var(--ink)',
+                                            fontSize:10,
+                                            letterSpacing:'0.12em',
+                                            fontWeight:800,
+                                        }}>
+                                            SHOULDER LINE
+                                        </div>
+                                    </div>
+                                )}
                                 {!streamAlive && (
                                     /* ── QR 코드 표시 (미연결 시) ── */
                                     <div style={{textAlign:'center', color:'#666', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%'}}>

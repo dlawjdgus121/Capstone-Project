@@ -10,12 +10,22 @@ from vision import process_video_track
 
 async def run_livekit():
     room = rtc.Room()
+    video_task = None
 
     @room.on("track_subscribed")
     def on_track_subscribed(track, publication, participant):
+        nonlocal video_task
         if track.kind == rtc.TrackKind.KIND_VIDEO:
             print("📹 LiveKit 비디오 트랙 수신 시작")
-            asyncio.create_task(process_video_track(track))
+            video_task = asyncio.create_task(process_video_track(track))
+
+    @room.on("disconnected")
+    def on_disconnected():
+        nonlocal video_task
+        print("🔌 LiveKit 연결 끊김 — 비디오 처리 중단")
+        if video_task and not video_task.done():
+            video_task.cancel()
+        state["log"] = "모바일 연결 끊김"
 
     @room.on("data_received")
     def on_data_received(data: rtc.DataPacket):
@@ -36,5 +46,16 @@ async def run_livekit():
             return
         await room.connect(LIVEKIT_URL, LIVEKIT_TOKEN)
         print("✅ [SYSTEM] LiveKit 서버 접속 성공")
+        # room 연결 유지
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        print("🔌 LiveKit 연결 취소됨 — 정리 중")
+        if video_task and not video_task.done():
+            video_task.cancel()
+            try:
+                await video_task
+            except asyncio.CancelledError:
+                pass
+        await room.disconnect()
     except Exception as e:
         print(f"🚨 [ERROR] LiveKit 접속 실패: {e}")

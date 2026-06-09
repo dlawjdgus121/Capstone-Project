@@ -24,8 +24,14 @@ from state import clear_frame_state, hw_state, state
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 mp_hands = mp.solutions.hands
+mp_pose = mp.solutions.pose
 hands = mp_hands.Hands(
     max_num_hands=2,
+    model_complexity=0,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+)
+pose = mp_pose.Pose(
     model_complexity=0,
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5,
@@ -45,6 +51,8 @@ servo_command_was_active = False
 last_servo_command_msg = b"V0.000Y0.000"
 last_servo_command_active_time = 0.0
 last_servo_keepalive_time = 0.0
+servo_one_shot_sent = False
+camera_setup_last_servo_time = 0.0
 gesture_state = {
     "swipe_history": deque(maxlen=8),
     "last_swipe_time": 0.0,
@@ -113,6 +121,19 @@ TRACK_EDGE_ZONE_Y = 0.10
 SERVO_SEND_INTERVAL = 0.02  # Keep commanding continuously while outside deadzone.
 SERVO_KEEPALIVE_INTERVAL = 0.05
 SERVO_KEEPALIVE_HOLD_SEC = 0.9
+ONE_SHOT_PAN_DEG_PER_SCREEN = 90.0
+ONE_SHOT_TILT_DEG_PER_SCREEN = 80.0
+ONE_SHOT_MAX_PAN_DEG = 45.0
+ONE_SHOT_MAX_TILT_DEG = 40.0
+SETUP_SHOULDER_TARGET_Y = 0.48
+SETUP_SHOULDER_TARGET_TOLERANCE = 0.06
+SETUP_TILT_DOWN_STEP_DEG = 3.0
+SETUP_TILT_DOWN_INTERVAL = 0.6
+
+# 리니어 슬라이드 속도 제어
+STEPPER_SPEED_SETUP = 10000.0    # 카메라 세팅 시 느린 속도
+STEPPER_SPEED_GESTURE = 20000.0  # 제스처 제어 시 빠른 속도
+stepper_speed_last_set = 0.0     # 마지막으로 설정한 속도 (중복 명령 방지)
 
 def reset_servo_tracking_state():
     global filtered_hand_x, filtered_hand_y
@@ -121,6 +142,7 @@ def reset_servo_tracking_state():
     global servo_command_was_active
     global last_servo_command_msg, last_servo_command_active_time
     global last_servo_keepalive_time
+    global servo_one_shot_sent
 
     filtered_hand_x = None
     filtered_hand_y = None
@@ -131,6 +153,7 @@ def reset_servo_tracking_state():
     last_servo_command_msg = b"V0.000Y0.000"
     last_servo_command_active_time = 0.0
     last_servo_keepalive_time = 0.0
+    servo_one_shot_sent = False
     hand_target_samples.clear()
 
 
@@ -174,6 +197,228 @@ def is_inside_tracking_deadzone(hx, hy):
         TRACK_EDGE_ZONE_X < hx < 1.0 - TRACK_EDGE_ZONE_X
         and TRACK_EDGE_ZONE_Y < hy < 1.0 - TRACK_EDGE_ZONE_Y
     )
+
+
+def set_stepper_speed(target_speed):
+    """리니어 슬라이드 속도 설정 (중복 명령 방지)"""
+    global stepper_speed_last_set
+    if stepper_speed_last_set != target_speed:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            msg = f"M{target_speed:.0f}".encode()
+            sock.sendto(msg, (ESP32_IP, UDP_PORT))
+        stepper_speed_last_set = target_speed
+
+
+def calculate_servo_centering_delta(hx, hy):
+    pan_delta = (0.5 - hx) * ONE_SHOT_PAN_DEG_PER_SCREEN
+    tilt_delta = (hy - 0.5) * ONE_SHOT_TILT_DEG_PER_SCREEN
+
+    pan_delta = max(-ONE_SHOT_MAX_PAN_DEG, min(ONE_SHOT_MAX_PAN_DEG, pan_delta))
+    tilt_delta = max(-ONE_SHOT_MAX_TILT_DEG, min(ONE_SHOT_MAX_TILT_DEG, tilt_delta))
+
+    return pan_delta, tilt_delta
+
+
+def shoulders_visible(pose_results):
+    if not pose_results or not pose_results.pose_landmarks:
+        return False
+
+    lms = pose_results.pose_landmarks.landmark
+    left = lms[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+    right = lms[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+
+    return (
+        left.visibility > 0.45
+        and right.visibility > 0.45
+        and 0.0 <= left.x <= 1.0
+        and 0.0 <= left.y <= 1.0
+        and 0.0 <= right.x <= 1.0
+        and 0.0 <= right.y <= 1.0
+    )
+
+
+def shoulder_center_y(pose_results):
+    if not shoulders_visible(pose_results):
+        return None
+
+    lms = pose_results.pose_landmarks.landmark
+    left = lms[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+    right = lms[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+    return (left.y + right.y) / 2.0
+
+
+def shoulder_at_setup_height(pose_results):
+    y = shoulder_center_y(pose_results)
+    if y is None:
+        return False
+
+    return abs(y - SETUP_SHOULDER_TARGET_Y) <= SETUP_SHOULDER_TARGET_TOLERANCE
+
+
+def hand_fully_visible(detected_hands, margin=0.02):
+    if len(detected_hands) < 2:
+        return False
+
+    for hand in detected_hands[:2]:
+        lms = hand["lms"].landmark
+        if not all(
+            margin <= lm.x <= 1.0 - margin
+            and margin <= lm.y <= 1.0 - margin
+            for lm in lms
+        ):
+            return False
+
+    return True
+
+
+def hand_center(detected_hands):
+    lms = detected_hands[0]["lms"].landmark
+    return (
+        sum(lm.x for lm in lms) / len(lms),
+        sum(lm.y for lm in lms) / len(lms),
+    )
+
+
+def handle_camera_setup(detected_hands, pose_results, now):
+    global camera_setup_last_servo_time
+
+    if not state.get("camera_setup_active", False):
+        return None
+
+    phase = state.get("camera_setup_phase", "idle")
+
+    if phase == "linear":
+        shoulder_y = shoulder_center_y(pose_results)
+        if shoulder_at_setup_height(pose_results):
+            state["camera_setup_phase"] = "pantilt"
+            state["camera_setup_message"] = "어깨 높이 도달, 틸트 하강 조정 중"
+            camera_setup_last_servo_time = 0.0
+            return "STOP"
+
+        if shoulder_y is None:
+            state["camera_setup_message"] = "어깨 높이를 찾는 중"
+        else:
+            state["camera_setup_message"] = f"어깨 높이 조정 중 ({shoulder_y:.2f})"
+        return "DOWN"
+
+    if phase == "pantilt":
+        if hand_fully_visible(detected_hands):
+            state["camera_setup_active"] = False
+            state["camera_setup_phase"] = "done"
+            state["camera_setup_done"] = True
+            state["camera_setup_message"] = "카메라 초기 세팅 완료"
+            sock.sendto(b"V0.000Y0.000", (ESP32_IP, UDP_PORT))
+            return "STOP"
+
+        state["camera_setup_message"] = "손 전체가 보이도록 틸트 하강 중"
+        if now - camera_setup_last_servo_time >= SETUP_TILT_DOWN_INTERVAL:
+            sock.sendto(f"C0.0Y{SETUP_TILT_DOWN_STEP_DEG:.1f}".encode(), (ESP32_IP, UDP_PORT))
+            camera_setup_last_servo_time = now
+
+        return "STOP"
+
+    return "NONE"
+
+
+def handle_camera_setup(detected_hands, pose_results, now):
+    global camera_setup_last_servo_time
+
+    if not state.get("camera_setup_active", False):
+        return None
+
+    # 카메라 세팅 시에는 느린 속도 적용
+    set_stepper_speed(STEPPER_SPEED_SETUP)
+
+    phase = state.get("camera_setup_phase", "idle")
+
+    if phase == "linear":
+        shoulder_y = shoulder_center_y(pose_results)
+        if shoulder_at_setup_height(pose_results):
+            state["camera_setup_phase"] = "pantilt"
+            state["camera_setup_message"] = "어깨 높이 도달, 틸트 하강 조정 중"
+            camera_setup_last_servo_time = 0.0
+            return "STOP"
+
+        if shoulder_y is None:
+            state["camera_setup_message"] = "어깨 높이를 찾는 중"
+        else:
+            state["camera_setup_message"] = f"어깨 높이 조정 중 ({shoulder_y:.2f})"
+        return "DOWN"
+
+    if phase == "pantilt":
+        if hand_fully_visible(detected_hands):
+            state["camera_setup_active"] = False
+            state["camera_setup_phase"] = "done"
+            state["camera_setup_done"] = True
+            state["camera_setup_message"] = "카메라 세팅이 완료됐습니다. 코칭을 시작합니다"
+            sock.sendto(b"V0.000Y0.000", (ESP32_IP, UDP_PORT))
+            return "STOP"
+
+        state["camera_setup_message"] = "양손 관절이 모두 보이도록 틸트 하강 중"
+        if now - camera_setup_last_servo_time >= SETUP_TILT_DOWN_INTERVAL:
+            sock.sendto(f"C0.0Y{SETUP_TILT_DOWN_STEP_DEG:.1f}".encode(), (ESP32_IP, UDP_PORT))
+            camera_setup_last_servo_time = now
+
+        return "STOP"
+
+    return "NONE"
+
+
+def handle_camera_setup(detected_hands, pose_results, now):
+    global camera_setup_last_servo_time
+
+    if not state.get("camera_setup_active", False):
+        return None
+
+    phase = state.get("camera_setup_phase", "idle")
+
+    if phase == "linear":
+        shoulder_y = shoulder_center_y(pose_results)
+        state["camera_setup_shoulder_y"] = shoulder_y
+        state["camera_setup_shoulder_line_y"] = SETUP_SHOULDER_TARGET_Y
+
+        if shoulder_at_setup_height(pose_results):
+            state["camera_setup_phase"] = "hands_prompt"
+            state["camera_setup_message"] = "양손을 작업대에 올려주세요"
+            state["camera_setup_countdown_started_at"] = now
+            state["camera_setup_countdown"] = 3
+            camera_setup_last_servo_time = 0.0
+            return "STOP"
+
+        state["camera_setup_message"] = "초기설정을 시작합니다"
+        state["camera_setup_countdown"] = 0
+        return "DOWN"
+
+    if phase == "hands_prompt":
+        started_at = float(state.get("camera_setup_countdown_started_at", now) or now)
+        remaining = max(0, int(math.ceil(3.0 - (now - started_at))))
+        state["camera_setup_countdown"] = remaining
+        state["camera_setup_message"] = "카메라 각도를 조정합니다 양 손을 작업대에 올려주세요"
+
+        if remaining <= 0:
+            state["camera_setup_phase"] = "pantilt"
+            camera_setup_last_servo_time = 0.0
+
+        return "STOP"
+
+    if phase == "pantilt":
+        state["camera_setup_countdown"] = 0
+        if hand_fully_visible(detected_hands):
+            state["camera_setup_active"] = False
+            state["camera_setup_phase"] = "done"
+            state["camera_setup_done"] = True
+            state["camera_setup_message"] = "카메라 세팅이 완료됐습니다. 코칭을 시작합니다"
+            sock.sendto(b"V0.000Y0.000", (ESP32_IP, UDP_PORT))
+            return "STOP"
+
+        state["camera_setup_message"] = "카메라 각도를 조정합니다 양 손을 작업대에 올려주세요"
+        if now - camera_setup_last_servo_time >= SETUP_TILT_DOWN_INTERVAL:
+            sock.sendto(f"C0.0Y{SETUP_TILT_DOWN_STEP_DEG:.1f}".encode(), (ESP32_IP, UDP_PORT))
+            camera_setup_last_servo_time = now
+
+        return "STOP"
+
+    return "NONE"
 
 
 def calculate_servo_velocity_command(hx, hy):
@@ -472,6 +717,8 @@ def detect_index_hold_slide(hand_lms):
     # 1.5초 이상 유지되면 실제 명령 적용
     if held_time >= hold_required:
         gesture_state["last_gesture"] = candidate
+        # 제스처 제어 시 빠른 속도 적용
+        set_stepper_speed(STEPPER_SPEED_GESTURE)
         reset_linear_hold(rearm=False)
         return candidate
 
@@ -713,6 +960,7 @@ def heavy_processing(img_bgr, level=2):
     global servo_command_was_active
     global last_servo_command_msg, last_servo_command_active_time
     global last_servo_keepalive_time
+    global servo_one_shot_sent
 
     h, w = img_bgr.shape[:2]
 
@@ -729,11 +977,23 @@ def heavy_processing(img_bgr, level=2):
         interpolation=cv2.INTER_LINEAR
     )
 
-    results = hands.process(cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB))
+    mp_rgb = cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB)
+    results = hands.process(mp_rgb)
+    
+    # 카메라 세팅이 완료되면 포즈 감지 스킵 (CPU 절약)
+    if not state.get("camera_setup_active", False) or state.get("camera_setup_phase", "idle") != "linear":
+        pose_results = None
+    else:
+        pose_results = pose.process(mp_rgb)
+    
     detected_hands = get_detected_hands(results)
+    setup_cmd = handle_camera_setup(detected_hands, pose_results, time.time())
+    control_hands = [] if setup_cmd is not None else detected_hands
+    if setup_cmd is not None:
+        detected_stepper_cmd = setup_cmd
 
     # 1. 두 손 추적 ON/OFF 제스처 우선 처리
-    two_hand_cmd = classify_two_hand_command(detected_hands)
+    two_hand_cmd = classify_two_hand_command(control_hands)
 
     skip_single_hand_control = two_hand_cmd in (
         "HOLDING_TRACKING_OFF",
@@ -754,8 +1014,8 @@ def heavy_processing(img_bgr, level=2):
         print("🖐️ [GESTURE] 두 손바닥 1.5초 유지 | 손 추적 재개")
 
     # 2. 한 손 제스처 및 팬/틸트 추적
-    if detected_hands and not skip_single_hand_control:
-        hand_lms = detected_hands[0]["lms"]
+    if control_hands and not skip_single_hand_control:
+        hand_lms = control_hands[0]["lms"]
 
         hx = hand_lms.landmark[8].x
         hy = hand_lms.landmark[8].y
@@ -800,6 +1060,7 @@ def heavy_processing(img_bgr, level=2):
                 inside_deadzone = is_inside_tracking_deadzone(*stable_target)
 
                 if inside_deadzone:
+                    servo_one_shot_sent = False
                     servo_velocity_pan = 0.0
                     servo_velocity_tilt = 0.0
                     last_servo_calc_time = 0.0
@@ -812,11 +1073,11 @@ def heavy_processing(img_bgr, level=2):
                         last_servo_command_active_time = 0.0
                         servo_command_was_active = False
 
-                elif now - last_servo_send_time >= SERVO_SEND_INTERVAL:
-                    pan_cmd, tilt_cmd = calculate_servo_velocity_command(
+                elif not servo_one_shot_sent and now - last_servo_send_time >= SERVO_SEND_INTERVAL:
+                    pan_delta, tilt_delta = calculate_servo_centering_delta(
                         *stable_target
                     )
-                    servo_msg = f"V{pan_cmd:.3f}Y{tilt_cmd:.3f}"
+                    servo_msg = f"C{pan_delta:.1f}Y{tilt_delta:.1f}"
 
                     sock.sendto(servo_msg.encode(), (ESP32_IP, UDP_PORT))
                     last_servo_send_time = now
@@ -824,6 +1085,7 @@ def heavy_processing(img_bgr, level=2):
                     last_servo_command_msg = servo_msg.encode()
                     last_servo_command_active_time = now
                     servo_command_was_active = True
+                    servo_one_shot_sent = True
 
     else:
         reset_linear_hold()
@@ -863,6 +1125,13 @@ def heavy_processing(img_bgr, level=2):
         "gesture_hold_progress": round(gesture_state["hold_progress"], 3),
         "tracking_active": hw_state["is_servo_active"],
         "stepper_state": hw_state["current_stepper_state"],
+        "camera_setup_active": state.get("camera_setup_active", False),
+        "camera_setup_phase": state.get("camera_setup_phase", "idle"),
+        "camera_setup_done": state.get("camera_setup_done", False),
+        "camera_setup_message": state.get("camera_setup_message", ""),
+        "camera_setup_countdown": state.get("camera_setup_countdown", 0),
+        "camera_setup_shoulder_y": state.get("camera_setup_shoulder_y"),
+        "camera_setup_shoulder_line_y": state.get("camera_setup_shoulder_line_y", SETUP_SHOULDER_TARGET_Y),
     }
 
     return stream_bytes, vlm_bytes, detected_stepper_cmd, frame_meta
@@ -911,8 +1180,6 @@ async def process_video_track(track: rtc.VideoTrack):
 
             frame = latest_raw_frame
             if frame is None:
-                keep_servo_command_alive()
-
                 if time.time() - last_frame_time > 3.0 and state["latest_frame"] is not None:
                     clear_frame_state()
                     state["log"] = "모바일 연결 끊김"
@@ -994,6 +1261,13 @@ async def process_video_track(track: rtc.VideoTrack):
                 state["gesture_hold_progress"] = frame_meta.get("gesture_hold_progress", 0.0)
                 state["tracking_active"] = frame_meta.get("tracking_active", True)
                 state["stepper_state"] = frame_meta.get("stepper_state", "STOP")
+                state["camera_setup_active"] = frame_meta.get("camera_setup_active", False)
+                state["camera_setup_phase"] = frame_meta.get("camera_setup_phase", "idle")
+                state["camera_setup_done"] = frame_meta.get("camera_setup_done", False)
+                state["camera_setup_message"] = frame_meta.get("camera_setup_message", "")
+                state["camera_setup_countdown"] = frame_meta.get("camera_setup_countdown", 0)
+                state["camera_setup_shoulder_y"] = frame_meta.get("camera_setup_shoulder_y")
+                state["camera_setup_shoulder_line_y"] = frame_meta.get("camera_setup_shoulder_line_y", SETUP_SHOULDER_TARGET_Y)
                 state["log"] = (
                     f"📡 WebRTC | FPS: {round(state['current_fps'], 1)} | "
                     f"recv {frame_meta['recv_frame_size']} | "
@@ -1005,4 +1279,9 @@ async def process_video_track(track: rtc.VideoTrack):
             except Exception as e:
                 print(f"🚨 영상 처리 오류: {e}")
 
-    await asyncio.gather(recv_loop(), process_loop())
+    try:
+        await asyncio.gather(recv_loop(), process_loop())
+    except asyncio.CancelledError:
+        print("📹 비디오 트랙 처리 태스크 취소됨 — 정리 중")
+        clear_frame_state()
+        raise
