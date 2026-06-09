@@ -313,6 +313,7 @@ async def _detect_cells_in_strip(client, strip_path: str) -> list:
             timeout=60.0,
         )
         if res.status_code != 200:
+            print(f"🚨 하위셀 탐지 응답 {res.status_code}: {res.text[:400]}")
             return []
         text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
         payload = _loads_first_json(text)
@@ -599,6 +600,7 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             timeout=60.0,
         )
         if res.status_code != 200:
+            print(f"🚨 페이지 탐지 응답 {res.status_code}: {res.text[:400]}")
             return []
 
         raw_steps = extract_gemini_steps(res.json())
@@ -675,6 +677,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
             timeout=60.0,
         )
         if res.status_code != 200:
+            print(f"🚨 이미지 탐지 응답 {res.status_code}: {res.text[:400]}")
             return []
 
         raw_steps = extract_gemini_steps(res.json())
