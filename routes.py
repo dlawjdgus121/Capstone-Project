@@ -140,7 +140,9 @@ def register_routes(app: FastAPI) -> None:
             "pending_step_idx": state.get("pending_step_idx"),
             "pass_hold_remaining_s": max(0.0, round(state.get("pass_hold_until", 0.0) - time.time(), 2)),
             "ai_response": state["ai_response"],
+            "ai_feedback": state.get("ai_feedback", ""),
             "ai_result": state["ai_result"],
+            "is_processing": state.get("is_processing", False),
             "analysis_time": state["analysis_time"],
             "progress_step": state["progress_step"],
             "step_locked": state["step_locked"],
@@ -175,6 +177,7 @@ def register_routes(app: FastAPI) -> None:
             "uploaded_preview": state["uploaded_preview"],
             "elapsed_time": get_elapsed_time(),
             "auto_infer_enabled": state.get("auto_infer_enabled", False),
+            "auto_infer_interval_s": state.get("auto_infer_interval_s", 5.0),
             "gesture": state.get("gesture", "NONE"),
             "gesture_holding_active": state.get("gesture_holding_active", False),
             "gesture_hold_elapsed": state.get("gesture_hold_elapsed", 0.0),
@@ -207,6 +210,7 @@ def register_routes(app: FastAPI) -> None:
                 "pending_step_idx": None,
                 "pass_hold_until": 0.0,
                 "ai_response": "대기 중.",
+                "ai_feedback": "",
                 "ai_result": "WAIT",
                 "is_analyzed": False,
                 "analysis_time": 0.0,
@@ -241,6 +245,16 @@ def register_routes(app: FastAPI) -> None:
     async def set_auto_infer(body: dict):
         state["auto_infer_enabled"] = bool(body.get("enabled", False))
         return {"status": "ok", "auto_infer_enabled": state["auto_infer_enabled"]}
+
+    @app.post("/set-auto-infer-interval")
+    async def set_auto_infer_interval(body: dict):
+        try:
+            interval_s = float(body.get("interval_s", state.get("auto_infer_interval_s", 5.0)))
+        except (TypeError, ValueError):
+            interval_s = float(state.get("auto_infer_interval_s", 5.0) or 5.0)
+        interval_s = max(1.0, min(30.0, interval_s))
+        state["auto_infer_interval_s"] = round(interval_s, 1)
+        return {"status": "ok", "auto_infer_interval_s": state["auto_infer_interval_s"]}
 
     @app.post("/start-camera-setup")
     async def start_camera_setup():

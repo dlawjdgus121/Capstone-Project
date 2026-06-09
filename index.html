@@ -164,6 +164,45 @@
             position: relative;
             overflow: hidden;
         }
+        .camera-shutter {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 28;
+            animation: shutter-flash 1100ms ease-out both;
+        }
+        .camera-shutter::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: rgba(255,255,255,0.82);
+            animation: shutter-wash 1100ms ease-out both;
+        }
+        .camera-shutter::after {
+            content: "";
+            position: absolute;
+            inset: 16px;
+            border: 2px solid rgba(255,255,255,0.95);
+            box-shadow: 0 0 0 999px rgba(0,0,0,0.14), 0 0 28px rgba(255,255,255,0.38);
+            animation: shutter-frame 1100ms cubic-bezier(.2,.8,.2,1) both;
+        }
+        @keyframes shutter-flash {
+            0% { opacity: 0; }
+            10% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        @keyframes shutter-wash {
+            0% { opacity: 0; }
+            8% { opacity: 1; }
+            42% { opacity: 0.12; }
+            100% { opacity: 0; }
+        }
+        @keyframes shutter-frame {
+            0% { opacity: 0; transform: scale(1.08); }
+            14% { opacity: 1; transform: scale(0.965); }
+            58% { opacity: 0.72; transform: scale(1); }
+            100% { opacity: 0; transform: scale(1.025); }
+        }
 
         .stat-dot {
             display: inline-block; width: 6px; height: 6px; border-radius: 50%;
@@ -304,7 +343,7 @@
 
         .settings-pop {
             position: absolute; bottom: calc(100% + 8px); right: 0;
-            width: 230px;
+            width: 260px;
             background: var(--bg-2);
             border: 1px solid var(--line-2);
             border-radius: 14px;
@@ -314,6 +353,14 @@
             transform-origin: bottom right;
         }
         @keyframes pop-in { from{opacity:0;transform:scale(0.96) translateY(4px)} to{opacity:1;transform:scale(1) translateY(0)} }
+        .setting-slider {
+            padding: 10px 8px 12px;
+        }
+        .setting-slider input[type="range"] {
+            width: 100%;
+            margin: 9px 0 0;
+            accent-color: var(--ink);
+        }
 
         .toggle {
             width: 30px; height: 16px; border-radius: 999px;
@@ -794,12 +841,13 @@ function PCView() {
     const [view, setView] = useState(demoStart || 'landing');
     const [status, setStatus] = useState(isDemo ? {
         ai_response: '왼쪽 모서리를 조금 더 안쪽으로 접어주세요.',
+        ai_feedback: '',
         manual_steps: DEMO_STEPS, current_step_idx: 1, has_frame: false,
         analysis_time: 26, is_analyzed: true, step_locked: false, progress_step: 'analyze',
         ai_result: 'WAIT', current_fps: 0, stream_level: 2, gesture: 'NONE',
         gesture_holding_active: false, gesture_hold_elapsed: 0, gesture_hold_required: 1.5, gesture_hold_progress: 0,
     } : {
-        ai_response:'대기 중...', manual_steps:[], current_step_idx:0, has_frame:false,
+        ai_response:'대기 중...', ai_feedback:'', manual_steps:[], current_step_idx:0, has_frame:false,
         analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload',
         ai_result:'WAIT', current_fps:0, stream_level:2, gesture:'NONE',
         gesture_holding_active:false, gesture_hold_elapsed:0, gesture_hold_required:1.5, gesture_hold_progress:0,
@@ -817,8 +865,16 @@ function PCView() {
     const liveElapsedRef                            = useRef(0);       // 클로저 안에서 최신값 참조용
     const [isDragging, setIsDragging] = useState(false);
     const [ttsOn, setTtsOn] = useState(true);
+    const [ttsRate, setTtsRate] = useState(() => {
+        const saved = Number(localStorage.getItem('ttsRate') || 1.05);
+        return Number.isFinite(saved) ? Math.max(0.7, Math.min(2.5, saved)) : 1.05;
+    });
     const [mirrorOn, setMirrorOn] = useState(() => localStorage.getItem('mirrorOn') === '1');  // 카메라 좌우 반전(거울)
     const [autoInfer, setAutoInfer] = useState(false);
+    const [autoInferInterval, setAutoInferInterval] = useState(() => {
+        const saved = Number(localStorage.getItem('autoInferInterval') || 5);
+        return Number.isFinite(saved) ? Math.max(1, Math.min(30, saved)) : 5;
+    });
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [showFail, setShowFail] = useState(false);
@@ -837,16 +893,66 @@ function PCView() {
     const [isPortrait, setIsPortrait]           = useState(false); // 세로 영상 여부
     const [qrCodeUrl, setQrCodeUrl] = useState('');
     const [streamAlive, setStreamAlive] = useState(false);
+    const [shutterKey, setShutterKey] = useState(0);
     const [previewSteps, setPreviewSteps] = useState([]);  // 파싱 프리뷰
     const sseRef = useRef(null);
     const [showHelp, setShowHelp] = useState(false);
     const passTimerRef = useRef(null);
     const prevAiResult = useRef('WAIT');
+    const prevProcessingRef = useRef(false);
+    const shutterTimerRef = useRef(null);
     const statusRef = useRef(status);
     const pingIntervalRef = useRef(null);
 
     /* edge-tts 재생 함수 — 서버 /tts 엔드포인트 사용, 실패 시 Web Speech 폴백 */
     const speakRef = useRef(null);  // 현재 재생 중인 Audio 객체
+
+    const triggerShutterDelayed = useCallback(() => {
+        if (shutterTimerRef.current) clearTimeout(shutterTimerRef.current);
+        shutterTimerRef.current = setTimeout(() => {
+            setShutterKey(k => k + 1);
+            shutterTimerRef.current = null;
+        }, 1000);
+    }, []);
+
+    const triggerShutterNow = useCallback(() => {
+        if (shutterTimerRef.current) {
+            clearTimeout(shutterTimerRef.current);
+            shutterTimerRef.current = null;
+        }
+        setShutterKey(k => k + 1);
+    }, []);
+
+    const updateTtsRate = useCallback((value) => {
+        const next = Math.max(0.7, Math.min(2.5, Number(value) || 1.05));
+        setTtsRate(next);
+        localStorage.setItem('ttsRate', String(next));
+    }, []);
+
+    const updateAutoInferInterval = useCallback((value) => {
+        const next = Math.max(1, Math.min(30, Number(value) || 5));
+        setAutoInferInterval(next);
+        localStorage.setItem('autoInferInterval', String(next));
+        fetch('/set-auto-infer-interval', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({interval_s: next}),
+        }).catch(()=>{});
+    }, []);
+
+    useEffect(() => {
+        fetch('/set-auto-infer-interval', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({interval_s: autoInferInterval}),
+        }).catch(()=>{});
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (shutterTimerRef.current) clearTimeout(shutterTimerRef.current);
+        };
+    }, []);
     const speak = useCallback((text) => {
         if (!text || !ttsOn) return;
         // 이전 재생 중지
@@ -858,16 +964,17 @@ function PCView() {
 
         // edge-tts 시도
         const audio = new Audio('/tts?text=' + encodeURIComponent(clean));
+        audio.playbackRate = ttsRate;
         speakRef.current = audio;
         audio.play().catch(() => {
             // 더 새로운 speak()가 이 audio를 교체/중단했다면 폴백하지 않음
             // (AbortError로 인한 Web Speech 중복 재생 방지)
             if (speakRef.current !== audio) return;
             const u = new SpeechSynthesisUtterance(clean);
-            u.lang = 'ko-KR'; u.rate = 1.05;
+            u.lang = 'ko-KR'; u.rate = ttsRate;
             window.speechSynthesis.speak(u);
         });
-    }, [ttsOn]);
+    }, [ttsOn, ttsRate]);
 
 
     const inputRef = useRef(null);
@@ -1111,14 +1218,19 @@ function PCView() {
                 setStatus(data);
                 statusRef.current = data;
                 if (data.has_frame) setStreamAlive(true);
+                if (view === 'coach' && data.has_frame && data.is_processing && !prevProcessingRef.current) {
+                    triggerShutterDelayed();
+                }
+                prevProcessingRef.current = !!data.is_processing;
                 if (typeof data.auto_infer_enabled === 'boolean') setAutoInfer(data.auto_infer_enabled);
+                if (typeof data.auto_infer_interval_s === 'number' && !settingsOpen) setAutoInferInterval(data.auto_infer_interval_s);
                 if (data.is_analyzed && data.manual_steps?.length > 0 && view === 'upload' && !uploading && !isNewStart) {
                     setView('coach');
                 }
             } catch(e){}
         }, 250);
         return () => clearInterval(t);
-    }, [view, uploading, isNewStart]);
+    }, [view, uploading, isNewStart, settingsOpen, triggerShutterDelayed]);
 
     const uploadFiles = useCallback(async (files) => {
         if (!files || !files.length) return;
@@ -1214,6 +1326,8 @@ function PCView() {
 
     const triggerVLM = useCallback(async () => {
         if (isAnalyzing || !status.has_frame) return;
+        triggerShutterNow();
+        prevProcessingRef.current = true;
         setIsAnalyzing(true);
         try {
             const res = await fetch('/trigger-vlm', { method:'POST' });
@@ -1221,7 +1335,7 @@ function PCView() {
             if (data.status !== 'success') alert(data.message || 'VLM 분석 실패');
         } catch(e) { alert('서버 오류'); }
         finally { setIsAnalyzing(false); }
-    }, [isAnalyzing, status.has_frame]);
+    }, [isAnalyzing, status.has_frame, triggerShutterNow]);
 
     const toggleAutoInfer = useCallback(async () => {
         const next = !autoInfer;
@@ -1241,16 +1355,16 @@ function PCView() {
         setShowComplete(false); setModalImg(null); setShowFail(false);
     }, [cancelCountdown]);
 
-    /* TTS — AI response */
+    /* TTS — AI feedback */
     useEffect(() => {
         if (view !== 'coach' || !ttsOn || !status.has_frame) return;
-        const text = status.ai_response;
+        const text = status.ai_feedback || status.ai_response;
         if (!text || text === prevAiResponse.current) return;
         prevAiResponse.current = text;
         // 대기/플레이스홀더 응답은 읽지 않음(스텝 안내 음성과 겹치거나 끊는 것 방지)
         if (/^(대기|WAIT)/i.test(text.replace(/^\[\w+\]\s*/, '').trim())) return;
         speak(text);
-    }, [status.ai_response, status.has_frame, view, ttsOn, speak]);
+    }, [status.ai_feedback, status.ai_response, status.has_frame, view, ttsOn, speak]);
 
     /* TTS — step change */
     useEffect(() => {
@@ -1820,6 +1934,28 @@ function PCView() {
                                                 </div>
                                                 <div className="toggle" data-on={ttsOn}/>
                                             </button>
+                                            <div className="setting-slider">
+                                                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
+                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>TTS 속도</div>
+                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-3)', letterSpacing:'0.1em'}}>
+                                                        {ttsRate.toFixed(2)}x
+                                                    </div>
+                                                </div>
+                                                <input type="range" min="0.7" max="2.5" step="0.05"
+                                                       value={ttsRate}
+                                                       onChange={e => updateTtsRate(e.target.value)}/>
+                                            </div>
+                                            <div className="setting-slider">
+                                                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
+                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>자동추론 주기</div>
+                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-3)', letterSpacing:'0.1em'}}>
+                                                        {Number(autoInferInterval).toFixed(1)}s
+                                                    </div>
+                                                </div>
+                                                <input type="range" min="1" max="15" step="0.5"
+                                                       value={autoInferInterval}
+                                                       onChange={e => updateAutoInferInterval(e.target.value)}/>
+                                            </div>
                                             <button onClick={() => setMirrorOn(v => { const nv=!v; localStorage.setItem('mirrorOn', nv?'1':'0'); return nv; })}
                                                     style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
                                                             padding:'10px 8px', background:'transparent', border:'none',
@@ -1856,7 +1992,10 @@ function PCView() {
                                            background:'#000',
                                            display: streamAlive ? 'block' : 'none',
                                            transform: mirrorOn ? 'scaleX(-1)' : 'none',
-                                       }}/>
+                                        }}/>
+                                {streamAlive && shutterKey > 0 && (
+                                    <div key={shutterKey} className="camera-shutter"/>
+                                )}
                                 {streamAlive && status.camera_setup_active && cameraSetupPhase === 'linear' && (
                                     <div style={{
                                         position:'absolute',
@@ -1987,8 +2126,8 @@ function PCView() {
                                     </div>
                                 )}
                             </div>
-                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'14px 20px',
-                                         display:'flex', alignItems:'flex-start', gap:18, minHeight:100, flexShrink:0}}>
+                            <div style={{background:'var(--bg-2)', borderTop:'1px solid var(--line)', padding:'18px 20px',
+                                         display:'flex', alignItems:'flex-start', gap:18, minHeight:128, flexShrink:0}}>
                                 <div style={{flex:1, minWidth:0}}>
                                     <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
                                         <span className={`stat-dot ${
@@ -2018,6 +2157,14 @@ function PCView() {
                                     }}>
                                         {status.has_frame ? status.ai_response : '모바일 기기를 연결하여 실시간 코칭을 받으세요.'}
                                     </p>
+                                    {status.has_frame && status.ai_feedback && (
+                                        <p style={{
+                                            margin:'6px 0 0', fontSize:22, lineHeight:1.5, fontWeight:400,
+                                            color:'var(--ink-2)', wordBreak:'keep-all',
+                                        }}>
+                                            {status.ai_feedback}
+                                        </p>
+                                    )}
                                 </div>
                                 <div style={{display:'flex', flexDirection:'column', gap:8, alignItems:'flex-end', flexShrink:0}}>
                                     <button className={`infer-btn ${autoInfer ? 'on' : 'off'}`}

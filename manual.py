@@ -734,6 +734,8 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
             "is_analyzed": False,
             "step_locked": False,
             "progress_step": "upload",
+            "ai_response": "대기 중...",
+            "ai_feedback": "",
             "ai_result": "WAIT",
             "analysis_time": 0.0,
         }
