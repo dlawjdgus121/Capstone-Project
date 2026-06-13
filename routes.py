@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import time
 from typing import List
 
@@ -142,7 +143,12 @@ def register_routes(app: FastAPI) -> None:
                 out = os.path.join(out_dir, f"manual_crop_{int(time.time() * 1000)}.jpg")
                 im.crop((left, top, right, bottom)).convert("RGB").save(out, "JPEG", quality=92)
             url = f"/outputs/{os.path.relpath(out, OUTPUT_DIR)}".replace("\\", "/")
-            return {"status": "ok", "image_url": url}
+            # 잘라 추가한 단계의 설명을 Gemini로 1회 자동 생성(실패해도 빈 문자열)
+            desc = ""
+            if body.get("describe", True):
+                from manual import generate_step_desc
+                desc = await generate_step_desc(out)
+            return {"status": "ok", "image_url": url, "desc": desc}
         except Exception as e:
             return {"status": "error", "message": f"크롭 실패: {type(e).__name__}: {e}"}
 
@@ -192,6 +198,117 @@ def register_routes(app: FastAPI) -> None:
             except Exception:
                 pass
         return {"status": "ok", "count": len(clean)}
+
+    @app.get("/sessions")
+    async def list_sessions():
+        """이어하기 목록: 과거 분석 세션들을 최근순으로 반환."""
+        out: list = []
+        for d in glob.glob(os.path.join(OUTPUT_DIR, "sess_*")):
+            instr = os.path.join(d, "instruction.json")
+            if not os.path.isfile(instr):
+                continue
+            try:
+                with open(instr, "r", encoding="utf-8") as f:
+                    steps = json.load(f)
+            except Exception:
+                continue
+            if not steps:
+                continue
+            meta = {}
+            mp = os.path.join(d, "session.json")
+            if os.path.isfile(mp):
+                try:
+                    with open(mp, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                except Exception:
+                    pass
+            # 미리보기: PDF 썸네일 → 없으면 첫 STEP 이미지
+            preview = ""
+            thumbs = sorted(glob.glob(os.path.join(d, "thumb-*.jpg")))
+            if thumbs:
+                preview = f"/outputs/{os.path.relpath(thumbs[0], OUTPUT_DIR)}".replace("\\", "/")
+            elif steps:
+                preview = steps[0].get("image_url", "")
+            try:
+                updated = float(meta.get("updated") or os.path.getmtime(instr))
+            except Exception:
+                updated = 0.0
+            out.append({
+                "sess": os.path.basename(d),
+                "name": meta.get("name") or "매뉴얼",
+                "steps": int(meta.get("steps") or len(steps)),
+                "current_step_idx": int(meta.get("current_step_idx", 0) or 0),
+                "analysis_time": meta.get("analysis_time", 0),
+                "updated": updated,
+                "preview": preview,
+            })
+        out.sort(key=lambda s: s["updated"], reverse=True)
+        return {"sessions": out[:30]}
+
+    @app.post("/resume-session")
+    async def resume_session_pick(body: dict):
+        """선택한 과거 세션을 현재 작업으로 불러옴(이어하기)."""
+        sess = str(body.get("sess", "")).strip()
+        # 경로 탈출 방지
+        if not sess or "/" in sess or "\\" in sess or ".." in sess:
+            return {"status": "error", "message": "잘못된 세션"}
+        d = os.path.join(OUTPUT_DIR, sess)
+        instr = os.path.join(d, "instruction.json")
+        if not os.path.isfile(instr):
+            return {"status": "error", "message": "세션 없음"}
+        try:
+            with open(instr, "r", encoding="utf-8") as f:
+                steps = json.load(f)
+        except Exception as e:
+            return {"status": "error", "message": f"불러오기 실패: {e}"}
+        if not steps:
+            return {"status": "error", "message": "빈 세션"}
+        idx, name, atime = 0, "", 0
+        mp = os.path.join(d, "session.json")
+        if os.path.isfile(mp):
+            try:
+                with open(mp, "r", encoding="utf-8") as f:
+                    m = json.load(f)
+                idx = int(m.get("current_step_idx", 0) or 0)
+                name = m.get("name", "")
+                atime = m.get("analysis_time", 0)
+            except Exception:
+                pass
+        idx = max(0, min(idx, len(steps) - 1))
+        REGISTERED_STEP_IDS.clear()
+        WARMED_STEP_IDS.clear()
+        reset_pass_transition()
+        state.update({
+            "manual_steps": steps,
+            "current_step_idx": idx,
+            "is_analyzed": True,
+            "progress_step": "done",
+            "analysis_time": atime,
+            "step_locked": False,
+            "ai_result": "WAIT",
+            "ai_response": "대기 중...",
+            "pending_step_idx": None,
+            "pass_hold_until": 0.0,
+            "pass_transition_id": 0,
+            "file_info": {"name": name, "pages": 0, "steps": len(steps)},
+        })
+        save_session()
+        return {"status": "ok", "steps": len(steps), "current_step_idx": idx}
+
+    @app.post("/delete-session")
+    async def delete_session_pick(body: dict):
+        """과거 세션 기록을 영구 삭제(폴더째 제거)."""
+        sess = str(body.get("sess", "")).strip()
+        if not sess or "/" in sess or "\\" in sess or ".." in sess or not sess.startswith("sess_"):
+            return {"status": "error", "message": "잘못된 세션"}
+        d = os.path.join(OUTPUT_DIR, sess)
+        if not os.path.isdir(d):
+            return {"status": "error", "message": "세션 없음"}
+        try:
+            shutil.rmtree(d)
+        except Exception as e:
+            return {"status": "error", "message": f"삭제 실패: {e}"}
+        return {"status": "ok", "sess": sess}
 
     @app.get("/status")
     async def get_status():

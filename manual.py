@@ -130,9 +130,66 @@ async def _translate_to_korean_batch(client: httpx.AsyncClient, texts: list) -> 
     return out
 
 
+async def generate_step_desc(image_path: str) -> str:
+    """크롭 이미지 1장을 보고 조립 동작을 한국어 한 문장으로 생성(편집 UI '잘라 추가'용).
+    Gemini 1회 호출. 실패 시 빈 문자열."""
+    try:
+        with Image.open(image_path) as im:
+            rgb = im.convert("RGB")
+            rgb.thumbnail((1024, 1024))
+            buf = io.BytesIO()
+            rgb.save(buf, format="JPEG", quality=90)
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        prompt = (
+            "이 그림은 조립 매뉴얼의 한 단계입니다. 무엇을 어떻게 조립하는지 "
+            "한국어 한 문장으로 간단히 설명하세요. 설명 문장만 출력하고 다른 말은 하지 마세요."
+        )
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                GEMINI_URL,
+                json={
+                    "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
+                    "generationConfig": _gen_config(temperature=0.2, json_out=False, thinking=TRANSLATE_THINKING),
+                },
+                timeout=30.0,
+            )
+        if res.status_code == 200:
+            return res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        print(f"🚨 설명 생성 응답 {res.status_code}: {res.text[:200]}")
+    except Exception as e:
+        print(f"🚨 설명 생성 실패: {e}")
+    return ""
+
+
+def _tolerant_json(text: str):
+    """모델이 낸 비표준 JSON도 최대한 파싱: 코드펜스 제거, 끝쉼표 제거, 후행 텍스트 허용.
+    최상위 객체({}) 또는 배열([]) 모두 허용. 실패 시 None."""
+    if not text:
+        return None
+    t = text.strip()
+    if t.startswith("```"):  # ```json … ``` 코드펜스 제거
+        t = re.sub(r"^```[a-zA-Z]*\n?", "", t).rstrip("`").strip()
+    starts = [i for i in (t.find("{"), t.find("[")) if i != -1]
+    if not starts:
+        return None
+    t = t[min(starts):]
+    # 끝쉼표(예: {"a":1,} / [1,2,]) 제거한 버전을 우선 시도
+    candidates = [re.sub(r",(\s*[}\]])", r"\1", t), t]
+    for c in candidates:
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(c)  # 첫 JSON 값만, 후행 텍스트 무시
+            return obj
+        except Exception:
+            continue
+    return None
+
+
 def extract_gemini_steps(response_json: dict) -> list:
     text = response_json["candidates"][0]["content"]["parts"][0]["text"]
-    payload = json.loads(text)
+    payload = _tolerant_json(text)
+    if payload is None:
+        print(f"⚠️ JSON 파싱 실패 — 응답 일부: {text[:200]!r}")
+        return []
 
     if isinstance(payload, dict):
         raw_steps = payload.get("steps", [])
@@ -254,20 +311,9 @@ def _url_to_fs(image_url: str) -> str:
 
 
 def _loads_first_json(text: str) -> dict:
-    """모델 응답에서 첫 JSON 객체만 안전하게 파싱(코드펜스/후행 텍스트 허용)."""
-    if not text:
-        return {}
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\n?", "", t).rstrip("`").strip()
-    start = t.find("{")
-    if start == -1:
-        return {}
-    try:
-        obj, _ = json.JSONDecoder().raw_decode(t[start:])
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
+    """모델 응답에서 첫 JSON 객체를 관대하게 파싱(코드펜스/끝쉼표/후행 텍스트 허용)."""
+    obj = _tolerant_json(text)
+    return obj if isinstance(obj, dict) else {}
 
 
 def _stacked_cells(cells: list) -> list:
@@ -350,6 +396,21 @@ def _crop_cell(src_url: str, box_2d: list, job_dir: str, tag: str) -> str | None
         return None
 
 
+def _img_sig(image_url: str):
+    """이미지의 32x32 그레이스케일 시그니처(중복 비교용). 실패 시 None."""
+    try:
+        import numpy as np
+        with Image.open(_url_to_fs(image_url)) as im:
+            return np.asarray(im.convert("L").resize((32, 32)), dtype=float)
+    except Exception:
+        return None
+
+
+def _sig_diff(a, b) -> float:
+    import numpy as np
+    return float(np.abs(a - b).mean())
+
+
 async def _expand_substeps(client, steps: list, job_dir: str) -> list:
     """하위셀이 2개 이상인 메인 STEP을 N-1, N-2 … 개별 STEP(평면)으로 확장.
     1개 이하면 원본 STEP을 그대로 유지."""
@@ -376,18 +437,35 @@ async def _expand_substeps(client, steps: list, job_dir: str) -> list:
             expanded.append(stp)  # 단일 셀 STEP은 그대로(연속 strip 있으면 유지)
             continue
         n = stp["step"]
-        for i, (src_url, c) in enumerate(cells, 1):
-            # _whole(번호 검출 실패한 연속 strip)은 통째로 사용, 그 외엔 셀 박스로 크롭
-            crop_url = src_url if c.get("_whole") or not c.get("box_2d") else _crop_cell(src_url, c["box_2d"], job_dir, f"sub_{n}_{i}")
+        # 1) 각 하위셀 크롭
+        built: list = []
+        for src_url, c in cells:
+            crop_url = src_url if c.get("_whole") or not c.get("box_2d") else _crop_cell(src_url, c["box_2d"], job_dir, f"sub_{n}_{len(built)+1}")
+            built.append({"image_url": crop_url or src_url, "desc": c.get("desc") or ""})
+        # 2) 이미지가 거의 동일한 하위단계 제거(메인 이미지+연속 strip에 같은 영역이 두 번 잡히는 중복)
+        kept, sigs = [], []
+        for b in built:
+            sig = _img_sig(b["image_url"])
+            if sig is not None and any(s is not None and _sig_diff(s, sig) < 18 for s in sigs):
+                continue  # 앞 하위단계와 거의 동일 → 중복으로 제거
+            kept.append(b); sigs.append(sig)
+        # 3) 중복 제거 후 2개 미만이면 분할 의미 없음 → 단일 STEP 유지
+        if len(kept) < 2:
+            expanded.append(stp)
+            continue
+        for i, b in enumerate(kept, 1):
             expanded.append({
                 "step": n,
                 "sub": i,
                 "label": f"{n}-{i}",
                 "title": f"STEP {n}",
-                "image_url": crop_url or src_url,
-                "desc": c.get("desc") or f"{n}-{i} 단계",
+                "image_url": b["image_url"],
+                "desc": b["desc"] or f"{n}-{i} 단계",
             })
-        print(f"  ✂️ STEP {n} → {len(cells)}개 하위단계로 분할")
+        if len(kept) < len(built):
+            print(f"  🧹 STEP {n} 중복 하위단계 {len(built)-len(kept)}개 제거 → {len(kept)}개")
+        else:
+            print(f"  ✂️ STEP {n} → {len(kept)}개 하위단계로 분할")
     return expanded
 
 
@@ -566,6 +644,29 @@ def _crop_col_slice(page_img_path: str, x0: int, x1: int, ytop_1000: int, ybot_1
         return None
 
 
+def _clip_box_against(box: list, others: list) -> list:
+    """box(0~1000)가 다른 검출 항목(others)의 중심을 포함하지 않도록 우/하단을 안쪽으로 클립.
+    Gemini가 한 STEP 박스를 과도하게 크게 그려 오른쪽 열/아래 STEP을 삼키는 것을 방지.
+    매뉴얼은 좌→우, 위→아래로 흐르므로 STEP 번호는 박스의 좌상단에 있다고 가정."""
+    ymin, xmin, ymax, xmax = box
+    inside = []
+    for oy0, ox0, oy1, ox1 in others:
+        ocx, ocy = (ox0 + ox1) / 2, (oy0 + oy1) / 2
+        if xmin < ocx < xmax and ymin < ocy < ymax:
+            inside.append((oy0, ox0, oy1, ox1))
+    for oy0, ox0, oy1, ox1 in sorted(inside, key=lambda t: (t[1], t[0])):
+        ocx, ocy = (ox0 + ox1) / 2, (oy0 + oy1) / 2
+        if not (xmin < ocx < xmax and ymin < ocy < ymax):
+            continue  # 앞선 클립으로 이미 박스 밖이면 건너뜀
+        if ox0 - xmin > 150:      # 항목이 뚜렷이 오른쪽에서 시작 → 다른 열 → 우측 클립
+            xmax = min(xmax, ox0)
+        elif oy0 - ymin > 80:     # 항목이 아래에서 시작 → 아래 STEP/셀 → 하단 클립
+            ymax = min(ymax, oy0)
+    if xmax - xmin < 20 or ymax - ymin < 20:
+        return box  # 과도 축소 시 원본 유지
+    return [ymin, xmin, ymax, xmax]
+
+
 async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: str) -> list:
     try:
         with Image.open(page_img_path) as img:
@@ -606,6 +707,7 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
             return []
 
         raw_steps = extract_gemini_steps(res.json())
+        all_boxes = [s["box_2d"] for s in raw_steps if s.get("box_2d")]
         # 외국어 desc는 1회 배치 호출로 직역(단계별 직렬 번역 제거)
         descs = await _translate_to_korean_batch(
             client, [s.get("desc", "").strip() or f"STEP {s.get('step_number', '?')} 조립" for s in raw_steps]
@@ -617,7 +719,9 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
                 if not box:
                     continue
                 desc = descs[idx]
-                ymin, xmin, ymax, xmax = box
+                # 다른 검출 항목을 삼키지 않도록 박스 클립(타이트 크롭)
+                others = [b for b in all_boxes if b is not box]
+                ymin, xmin, ymax, xmax = _clip_box_against(box, others)
                 left = max(0, int(xmin * orig_w / 1000))
                 top = max(0, int(ymin * orig_h / 1000))
                 right = min(orig_w, int(xmax * orig_w / 1000))
@@ -734,13 +838,15 @@ async def _run_picture_pipeline(client, page_imgs: list, job_dir: str) -> list:
     return steps
 
 
-_DETECT_PASSES = 3  # 페이지당 메인 탐지 반복 횟수(다수결로 무작위성 완화). 느려도 정확도 우선.
+_DETECT_PASSES = 1  # 페이지당 메인 탐지 반복 횟수. 1=단일 검출(빠름·저비용). 2~3=다수결(느림·정확↑).
 
 
 async def _detect_page_consensus(client, page_img_path: str, page_num: int, job_dir: str) -> list:
-    """같은 페이지를 여러 번 탐지해 '다수결'로 메인 STEP을 확정.
-    - 과반(>=2/3)의 패스에서 나온 STEP 번호만 채택 → 1회성 오검출(표지 배지 등)·누락 완화
+    """페이지 메인 STEP 탐지. _DETECT_PASSES>1이면 여러 번 검출해 '다수결'로 확정.
+    - 과반 패스에서 나온 STEP만 채택 → 1회성 오검출(표지 배지 등)·누락 완화
     - 박스는 패스들의 '중앙값'으로 → 가끔 튀는 거대/빈 박스 영향 제거"""
+    if _DETECT_PASSES <= 1:
+        return await analyze_pdf_page(client, page_img_path, page_num, job_dir)  # 단일 검출(다수결 우회)
     passes = await asyncio.gather(
         *[analyze_pdf_page(client, page_img_path, page_num, job_dir) for _ in range(_DETECT_PASSES)]
     )
@@ -809,22 +915,7 @@ async def _run_text_pipeline(client, page_imgs: list, job_dir: str) -> list:
         mains_by_col: dict = {}
         for m in new_mains:
             mains_by_col.setdefault(_col_idx(m.get("_box")), []).append(m)
-
-        # 메인 STEP 이미지를 '자기 열 슬라이스'로 재크롭(번호 위치~다음 메인 전까지).
-        # Gemini의 들쭉날쭉한 메인 박스 대신 열 전체를 써서 하위셀을 모두 포함 → 분할 안정화.
-        for ci, ms in mains_by_col.items():
-            x0, x1 = cols[ci]
-            ms_sorted = sorted(ms, key=lambda m: (m.get("_box") or [0])[0])
-            for j, m in enumerate(ms_sorted):
-                ytop = (m.get("_box") or [0, 0, 0, 0])[0]
-                ybot = (ms_sorted[j + 1].get("_box") or [0, 0, 0, 0])[0] if j + 1 < len(ms_sorted) else None
-                # 슬라이스 왼쪽 끝은 '열 왼쪽'과 'STEP 번호(박스 xmin)' 중 더 오른쪽으로 →
-                # 같은 열 왼쪽에 표지/딴 블록이 있어도 STEP 콘텐츠만 잘림(예: page1 표지)
-                bx = int((m.get("_box") or [0, 0, 0, 0])[1] / 1000 * w_pg)
-                sx0 = max(x0, bx)
-                new_url = _crop_col_slice(page_path, sx0, x1, ytop, ybot, job_dir, f"step_p{pi+1}_{m['step']}")
-                if new_url:
-                    m["image_url"] = new_url
+        # (메인 STEP 이미지는 analyze_pdf_page의 '클립된 박스 크롭'을 그대로 사용 — 타이트하게 잘림)
 
         # 열을 좌→우로 보며, 메인이 없는 '빈 열'을 연속으로 귀속:
         #  - 왼쪽에 이 페이지 메인이 있으면 그 메인의 우측 연속

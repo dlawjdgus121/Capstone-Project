@@ -1,7 +1,18 @@
 import json
 import os
+import time
 
 from config import BASE_DIR, OUTPUT_DIR
+
+
+def _current_session_dir() -> str | None:
+    """현재 manual_steps의 image_url에서 세션 디렉터리(outputs/sess_X)를 유도."""
+    for s in state.get("manual_steps", []):
+        url = s.get("image_url", "")
+        if "/outputs/" in url:
+            seg = url.split("/outputs/", 1)[-1].split("/")[0]
+            return os.path.join(OUTPUT_DIR, seg)
+    return None
 
 state = {
     "latest_frame": None,
@@ -127,6 +138,25 @@ def save_session() -> None:
             )
     except Exception as e:
         print(f"⚠️ 세션 저장 실패: {e}")
+
+    # 세션별 메타(이어하기 목록·진행도용) — 각 세션 디렉터리에 session.json 저장
+    sess = _current_session_dir()
+    if sess:
+        try:
+            with open(os.path.join(sess, "session.json"), "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "name": state["file_info"].get("name", ""),
+                        "current_step_idx": state["current_step_idx"],
+                        "steps": len(state["manual_steps"]),
+                        "analysis_time": state["analysis_time"],
+                        "updated": time.time(),
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+        except Exception:
+            pass
 
 
 def load_session() -> bool:
