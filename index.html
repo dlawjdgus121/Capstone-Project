@@ -1119,6 +1119,7 @@ function PCView() {
         return Number.isFinite(saved) ? Math.max(1, Math.min(30, saved)) : 5;
     });
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsTab, setSettingsTab] = useState('audio');  // 설정 카테고리: audio | display | ai | camera
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [showFail, setShowFail] = useState(false);
     const [failReason, setFailReason] = useState('');
@@ -2279,79 +2280,100 @@ function PCView() {
                                     Settings
                                 </button>
                                 {settingsOpen && (
-                                    <div className="settings-pop" onClick={e=>e.stopPropagation()}>
-                                        <div style={{padding:12}}>
-                                            <div className="label" style={{padding:'4px 8px 8px'}}>Preferences</div>
-                                            <button onClick={() => { setTtsOn(v=>!v); window.speechSynthesis.cancel(); }}
-                                                    style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
-                                                            padding:'10px 8px', background:'transparent', border:'none',
-                                                            cursor:'pointer', borderRadius:2, transition:'background 0.15s'}}
-                                                    onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
-                                                    onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                                                <div style={{textAlign:'left'}}>
-                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>음성 안내</div>
-                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:2}}>TTS · Korean</div>
-                                                </div>
-                                                <div className="toggle" data-on={ttsOn}/>
-                                            </button>
-                                            <div className="setting-slider">
-                                                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
-                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>TTS 속도</div>
-                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-3)', letterSpacing:'0.1em'}}>
-                                                        {ttsRate.toFixed(2)}x
-                                                    </div>
-                                                </div>
-                                                <input type="range" min="0.7" max="2.5" step="0.05"
-                                                       value={ttsRate}
-                                                       onChange={e => updateTtsRate(e.target.value)}/>
+                                    <div className="modal-back" onClick={() => setSettingsOpen(false)}>
+                                        <div className="modal-card" onClick={e=>e.stopPropagation()}
+                                             style={{maxWidth:760, width:'92vw', height:'72vh', maxHeight:540,
+                                                     padding:0, flexDirection:'row', alignItems:'stretch', gap:0, overflow:'hidden'}}>
+                                            <button className="modal-close" onClick={() => setSettingsOpen(false)}
+                                                    style={{top:12, right:14, zIndex:5}}>✕</button>
+                                            {/* 좌측 카테고리 레일 */}
+                                            <div style={{width:188, flexShrink:0, borderRight:'1px solid var(--line-2)',
+                                                         background:'var(--bg)', padding:'26px 0', display:'flex', flexDirection:'column', gap:2}}>
+                                                <div className="label" style={{padding:'0 22px 16px'}}>● 설정</div>
+                                                {[
+                                                    {id:'audio',   icon:'🔊', label:'오디오'},
+                                                    {id:'display', icon:'🖥', label:'화면'},
+                                                    {id:'ai',      icon:'⚙',  label:'AI 추론'},
+                                                    {id:'camera',  icon:'🎥', label:'카메라'},
+                                                ].map(t => (
+                                                    <button key={t.id} onClick={() => setSettingsTab(t.id)}
+                                                            style={{display:'flex', alignItems:'center', gap:11, padding:'12px 22px',
+                                                                    textAlign:'left', cursor:'pointer', fontSize:14,
+                                                                    background: settingsTab===t.id ? 'var(--bg-2)' : 'transparent',
+                                                                    border:'none', borderLeft:`3px solid ${settingsTab===t.id ? 'var(--accent)' : 'transparent'}`,
+                                                                    fontWeight: settingsTab===t.id ? 600 : 400,
+                                                                    color: settingsTab===t.id ? 'var(--ink)' : 'var(--ink-3)',
+                                                                    transition:'all 0.15s'}}>
+                                                        <span style={{fontSize:15}}>{t.icon}</span>{t.label}
+                                                    </button>
+                                                ))}
                                             </div>
-                                            <div className="setting-slider">
-                                                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
-                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>자동추론 주기</div>
-                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-3)', letterSpacing:'0.1em'}}>
-                                                        {Number(autoInferInterval).toFixed(1)}s
+                                            {/* 우측 내용 */}
+                                            <div style={{flex:1, minWidth:0, overflowY:'auto', padding:'30px 34px'}}>
+                                                {settingsTab==='audio' && (<>
+                                                    <h3 style={{margin:'0 0 4px', fontSize:20, fontWeight:500, letterSpacing:'-0.02em'}}>오디오</h3>
+                                                    <div className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em', marginBottom:22}}>AUDIO</div>
+                                                    <button onClick={() => { setTtsOn(v=>!v); window.speechSynthesis.cancel(); }}
+                                                            style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                                    padding:'14px 4px', background:'transparent', border:'none', borderBottom:'1px solid var(--line)',
+                                                                    cursor:'pointer'}}>
+                                                        <div style={{textAlign:'left'}}>
+                                                            <div style={{fontSize:14, fontWeight:500, color:'var(--ink)'}}>음성 안내</div>
+                                                            <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:3}}>단계·피드백을 한국어 음성으로 안내</div>
+                                                        </div>
+                                                        <div className="toggle" data-on={ttsOn}/>
+                                                    </button>
+                                                    <div style={{padding:'16px 4px 0', opacity: ttsOn ? 1 : 0.45, pointerEvents: ttsOn ? 'auto' : 'none'}}>
+                                                        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:8}}>
+                                                            <div style={{fontSize:14, fontWeight:500, color:'var(--ink)'}}>음성 속도</div>
+                                                            <div className="mono" style={{fontSize:11, color:'var(--ink-3)', letterSpacing:'0.1em'}}>{ttsRate.toFixed(2)}x</div>
+                                                        </div>
+                                                        <input type="range" min="0.7" max="2.5" step="0.05" value={ttsRate}
+                                                               onChange={e => updateTtsRate(e.target.value)} style={{width:'100%'}}/>
                                                     </div>
-                                                </div>
-                                                <input type="range" min="1" max="15" step="0.5"
-                                                       value={autoInferInterval}
-                                                       onChange={e => updateAutoInferInterval(e.target.value)}/>
+                                                </>)}
+                                                {settingsTab==='display' && (<>
+                                                    <h3 style={{margin:'0 0 4px', fontSize:20, fontWeight:500, letterSpacing:'-0.02em'}}>화면</h3>
+                                                    <div className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em', marginBottom:22}}>DISPLAY</div>
+                                                    <button onClick={() => setMirrorOn(v => { const nv=!v; localStorage.setItem('mirrorOn', nv?'1':'0'); return nv; })}
+                                                            style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                                    padding:'14px 4px', background:'transparent', border:'none', borderBottom:'1px solid var(--line)',
+                                                                    cursor:'pointer'}}>
+                                                        <div style={{textAlign:'left'}}>
+                                                            <div style={{fontSize:14, fontWeight:500, color:'var(--ink)'}}>좌우 반전 (거울)</div>
+                                                            <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:3}}>전면 카메라용 · 화면 표시만 반전</div>
+                                                        </div>
+                                                        <div className="toggle" data-on={mirrorOn}/>
+                                                    </button>
+                                                </>)}
+                                                {settingsTab==='ai' && (<>
+                                                    <h3 style={{margin:'0 0 4px', fontSize:20, fontWeight:500, letterSpacing:'-0.02em'}}>AI 추론</h3>
+                                                    <div className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em', marginBottom:22}}>INFERENCE</div>
+                                                    <div style={{padding:'4px 4px 0'}}>
+                                                        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:8}}>
+                                                            <div style={{fontSize:14, fontWeight:500, color:'var(--ink)'}}>자동추론 주기</div>
+                                                            <div className="mono" style={{fontSize:11, color:'var(--ink-3)', letterSpacing:'0.1em'}}>{Number(autoInferInterval).toFixed(1)}s</div>
+                                                        </div>
+                                                        <input type="range" min="1" max="15" step="0.5" value={autoInferInterval}
+                                                               onChange={e => updateAutoInferInterval(e.target.value)} style={{width:'100%'}}/>
+                                                        <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.08em', marginTop:10}}>자동추론 ON일 때 카메라를 분석하는 간격</div>
+                                                    </div>
+                                                </>)}
+                                                {settingsTab==='camera' && (<>
+                                                    <h3 style={{margin:'0 0 4px', fontSize:20, fontWeight:500, letterSpacing:'-0.02em'}}>카메라</h3>
+                                                    <div className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em', marginBottom:22}}>CAMERA</div>
+                                                    <div style={{fontSize:13, color:'var(--ink-3)', lineHeight:1.6, marginBottom:18}}>
+                                                        카메라 팬·틸트·리니어 위치를 작업대 높이에 맞춰 자동 보정합니다.
+                                                    </div>
+                                                    <button className="btn-spline" style={{minWidth:200}}
+                                                            onClick={async () => {
+                                                                try { await fetch('/start-camera-setup', { method: 'POST' }); setSettingsOpen(false); }
+                                                                catch (err) { console.error(err); }
+                                                            }}>
+                                                        🎥 자동 위치 보정 시작
+                                                    </button>
+                                                </>)}
                                             </div>
-                                            <button onClick={() => setMirrorOn(v => { const nv=!v; localStorage.setItem('mirrorOn', nv?'1':'0'); return nv; })}
-                                                    style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
-                                                            padding:'10px 8px', background:'transparent', border:'none',
-                                                            cursor:'pointer', borderRadius:2, transition:'background 0.15s'}}
-                                                    onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
-                                                    onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                                                <div style={{textAlign:'left'}}>
-                                                    <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>좌우 반전 (거울)</div>
-                                                    <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:2}}>전면 카메라용 · 화면 표시만 반전</div>
-                                                </div>
-                                                <div className="toggle" data-on={mirrorOn}/>
-                                            </button>
-                                            <button
-    onClick={async () => {
-        try {
-            await fetch('/start-camera-setup', {
-                method: 'POST'
-            });
-            setSettingsOpen(false);
-        } catch (err) {
-            console.error(err);
-        }
-    }}
-    style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
-            padding:'10px 8px', background:'transparent', border:'none',
-            cursor:'pointer', borderRadius:2, transition:'background 0.15s'}}
-    onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
-    onMouseLeave={e=>e.currentTarget.style.background='transparent'}
->
-    <div style={{textAlign:'left'}}>
-        <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>카메라 세팅</div>
-        <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:2}}>
-            자동 위치 보정 시작
-        </div>
-    </div>
-</button>
                                         </div>
                                     </div>
                                 )}
