@@ -4,15 +4,17 @@ import json
 import os
 import re
 import shutil
+import socket
+import threading
 import time
 from typing import List
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from config import LIVEKIT_URL, MOBILE_TOKEN, OUTPUT_DIR, PC_TOKEN, VLM_JPEG_QUALITY
+from config import ESP32_IP, LIVEKIT_URL, MOBILE_TOKEN, OUTPUT_DIR, PC_TOKEN, UDP_PORT, VLM_JPEG_QUALITY
 from manual import get_elapsed_time, preview_event_stream, process_manual_files, reset_preview_state
-from state import SESSION_FILE, clear_frame_state, clear_vlm_timing, save_session, state
+from state import SESSION_FILE, clear_frame_state, clear_vlm_timing, hw_state, save_session, state
 from vlm import (
     REGISTERED_STEP_IDS,
     WARMED_STEP_IDS,
@@ -26,6 +28,25 @@ try:
 except ImportError:
     _EDGE_TTS_OK = False
     print("⚠️ edge-tts 없음 — pip install edge-tts")
+
+def query_esp32_servo_angle() -> dict:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(0.5)
+        sock.sendto(b"L", (ESP32_IP, UDP_PORT))
+        data, addr = sock.recvfrom(128)
+
+    msg = data.decode("utf-8", errors="ignore").strip()
+    match = re.match(r"^A([-+]?\d+(?:[.]\d+)?)T([-+]?\d+(?:[.]\d+)?)(?:S([01]))?$", msg)
+    if not match:
+        raise ValueError(f"unexpected ESP32 servo response: {msg!r}")
+
+    return {
+        "current_pan": round(float(match.group(1)), 1),
+        "current_tilt": round(float(match.group(2)), 1),
+        "is_servo_attached": match.group(3) != "0",
+        "raw": msg,
+        "addr": addr[0],
+    }
 
 
 def register_routes(app: FastAPI) -> None:
@@ -310,6 +331,38 @@ def register_routes(app: FastAPI) -> None:
             return {"status": "error", "message": f"삭제 실패: {e}"}
         return {"status": "ok", "sess": sess}
 
+    @app.post("/servo-angle")
+    async def show_servo_angle():
+        try:
+            servo = await asyncio.to_thread(query_esp32_servo_angle)
+        except Exception as e:
+            print(f"[SERVO] ESP32 angle request failed: {type(e).__name__}: {e}")
+            return {"status": "error", "message": str(e)}
+
+        pan = servo["current_pan"]
+        tilt = servo["current_tilt"]
+        attached = servo["is_servo_attached"]
+        hw_state["current_pan"] = pan
+        hw_state["current_tilt"] = tilt
+        hw_state["smooth_pan"] = pan
+        hw_state["smooth_tilt"] = tilt
+        smooth_pan = pan
+        smooth_tilt = tilt
+        active = attached
+        print(
+            f"[SERVO] current pan={pan:.1f}°, tilt={tilt:.1f}° "
+            f"| smooth pan={smooth_pan:.1f}°, tilt={smooth_tilt:.1f}° "
+            f"| tracking={'ON' if active else 'OFF'}"
+        )
+        return {
+            "status": "ok",
+            "current_pan": pan,
+            "current_tilt": tilt,
+            "smooth_pan": smooth_pan,
+            "smooth_tilt": smooth_tilt,
+            "is_servo_active": active,
+        }
+
     @app.get("/status")
     async def get_status():
         return {
@@ -319,7 +372,9 @@ def register_routes(app: FastAPI) -> None:
             "pending_step_idx": state.get("pending_step_idx"),
             "pass_hold_remaining_s": max(0.0, round(state.get("pass_hold_until", 0.0) - time.time(), 2)),
             "ai_response": state["ai_response"],
+            "ai_feedback": state.get("ai_feedback", ""),
             "ai_result": state["ai_result"],
+            "is_processing": state.get("is_processing", False),
             "analysis_time": state["analysis_time"],
             "progress_step": state["progress_step"],
             "step_locked": state["step_locked"],
@@ -354,6 +409,7 @@ def register_routes(app: FastAPI) -> None:
             "uploaded_preview": state["uploaded_preview"],
             "elapsed_time": get_elapsed_time(),
             "auto_infer_enabled": state.get("auto_infer_enabled", False),
+            "auto_infer_interval_s": state.get("auto_infer_interval_s", 5.0),
             "gesture": state.get("gesture", "NONE"),
             "gesture_holding_active": state.get("gesture_holding_active", False),
             "gesture_hold_elapsed": state.get("gesture_hold_elapsed", 0.0),
@@ -361,6 +417,17 @@ def register_routes(app: FastAPI) -> None:
             "gesture_hold_progress": state.get("gesture_hold_progress", 0.0),
             "tracking_active": state.get("tracking_active", True),
             "stepper_state": state.get("stepper_state", "STOP"),
+            "servo_pan": round(float(hw_state.get("current_pan", 0.0)), 1),
+            "servo_tilt": round(float(hw_state.get("current_tilt", 0.0)), 1),
+            "servo_active": bool(hw_state.get("is_servo_active", False)),
+            "camera_setup_active": state.get("camera_setup_active", False),
+            "camera_setup_phase": state.get("camera_setup_phase", "idle"),
+            "camera_setup_done": state.get("camera_setup_done", False),
+            "camera_setup_message": state.get("camera_setup_message", ""),
+            "camera_setup_countdown": state.get("camera_setup_countdown", 0),
+            "camera_setup_countdown_started_at": state.get("camera_setup_countdown_started_at", 0.0),
+            "camera_setup_shoulder_y": state.get("camera_setup_shoulder_y"),
+            "camera_setup_shoulder_line_y": state.get("camera_setup_shoulder_line_y", 0.48),
         }
 
     @app.post("/reset")
@@ -375,6 +442,7 @@ def register_routes(app: FastAPI) -> None:
                 "pending_step_idx": None,
                 "pass_hold_until": 0.0,
                 "ai_response": "대기 중.",
+                "ai_feedback": "",
                 "ai_result": "WAIT",
                 "is_analyzed": False,
                 "analysis_time": 0.0,
@@ -389,6 +457,14 @@ def register_routes(app: FastAPI) -> None:
                 "gesture_hold_progress": 0.0,
                 "tracking_active": True,
                 "stepper_state": "STOP",
+                "camera_setup_active": False,
+                "camera_setup_phase": "idle",
+                "camera_setup_done": False,
+                "camera_setup_message": "",
+                "camera_setup_countdown": 0,
+                "camera_setup_countdown_started_at": 0.0,
+                "camera_setup_shoulder_y": None,
+                "camera_setup_shoulder_line_y": 0.48,
             }
         )
         clear_vlm_timing()
@@ -401,6 +477,63 @@ def register_routes(app: FastAPI) -> None:
     async def set_auto_infer(body: dict):
         state["auto_infer_enabled"] = bool(body.get("enabled", False))
         return {"status": "ok", "auto_infer_enabled": state["auto_infer_enabled"]}
+
+    @app.post("/set-auto-infer-interval")
+    async def set_auto_infer_interval(body: dict):
+        try:
+            interval_s = float(body.get("interval_s", state.get("auto_infer_interval_s", 5.0)))
+        except (TypeError, ValueError):
+            interval_s = float(state.get("auto_infer_interval_s", 5.0) or 5.0)
+        interval_s = max(1.0, min(30.0, interval_s))
+        state["auto_infer_interval_s"] = round(interval_s, 1)
+        return {"status": "ok", "auto_infer_interval_s": state["auto_infer_interval_s"]}
+
+    @app.post("/start-camera-setup")
+    async def start_camera_setup():
+        state["camera_setup_active"] = True
+        state["camera_setup_phase"] = "linear"
+        state["camera_setup_done"] = False
+        state["camera_setup_message"] = "어깨 위치를 찾는 중"
+        state["camera_setup_message"] = "초기설정을 시작합니다"
+        state["camera_setup_countdown"] = 0
+        state["camera_setup_countdown_started_at"] = 0.0
+        state["camera_setup_shoulder_y"] = None
+        state["camera_setup_shoulder_line_y"] = 0.48
+        return {"status": "ok"}
+
+    @app.post("/stop-stepper")
+    async def stop_stepper():
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b"S", (ESP32_IP, UDP_PORT))
+        hw_state["current_stepper_state"] = "STOP"
+        state["stepper_state"] = "STOP"
+        state["camera_setup_active"] = False
+        state["camera_setup_phase"] = "idle"
+        state["camera_setup_message"] = "리니어슬라이드 정지"
+        print("[HW] STEPPER STOP by keyboard")
+        return {"status": "ok"}
+
+    @app.post("/shutdown")
+    async def shutdown():
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b"S", (ESP32_IP, UDP_PORT))
+        hw_state["current_stepper_state"] = "STOP"
+        hw_state["is_servo_active"] = False
+        state["stepper_state"] = "STOP"
+        state["tracking_active"] = False
+        state["camera_setup_active"] = False
+        state["camera_setup_phase"] = "idle"
+        state["camera_setup_message"] = "브라우저 종료 - 시스템 종료"
+        print("[SYS] shutdown request received — stepper stop and tracking disabled")
+        threading.Timer(0.25, lambda: os._exit(0)).start()
+        return {"status": "ok", "message": "shutdown initiated"}
+
+    @app.post("/reset-camera-setup")
+    async def reset_camera_setup():
+        state["camera_setup_active"] = False
+        state["camera_setup_phase"] = "idle"
+        state["camera_setup_message"] = ""
+        return {"status": "ok", "message": "camera setup reset"}
 
     @app.post("/trigger-vlm")
     async def trigger_vlm_analysis():

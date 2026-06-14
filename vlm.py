@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import io
 import os
+import re
 import time
 
 import httpx
@@ -48,31 +49,57 @@ async def close_runpod_http_client() -> None:
         print("✅ [RUNPOD HTTP] AsyncClient 종료", flush=True)
 
 
-def make_vlm_step_id(manual_img_path: str, step_desc: str = "") -> str:
+def normalize_lora_path(value: str | None) -> str:
+    # Single-adapter mode: adapter selection is owned by the serving/proxy side.
+    # Do not forward per-manual or per-step LoRA names from the web server.
+    return ""
+
+
+def get_step_lora_path(step: dict) -> str:
+    return ""
+
+
+def make_vlm_step_id(manual_img_path: str, step_desc: str = "", lora_path: str = "") -> str:
     raw = f"{manual_img_path}|{step_desc}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
-def build_vlm_prompt(step_desc: str = "") -> str:
-    return f"""You are a lenient assembly manual inspector. Be generous with PASS judgments.
+def parse_verdict_output(text: str) -> tuple[str, str, str]:
+    text = (text or "").strip()
+    if not text:
+        return "", "", ""
 
-Current step instruction: {step_desc if step_desc else "No instruction — compare the two images visually."}
+    verdict_text = text
+    match = re.search(r"VERDICT\s*:\s*(.+)", text, re.IGNORECASE | re.DOTALL)
+    if match:
+        verdict_text = match.group(1).strip()
 
-Judgment standard (IMPORTANT — be generous):
-- PASS: The result roughly matches the instruction. Minor imperfections, slight misalignment, or partial completion are acceptable. If the main action is done, give PASS.
-- FAIL: Only if the action is clearly NOT done at all, or the result is completely wrong.
-- When in doubt, choose PASS.
+    parts = [part.strip() for part in verdict_text.split("||")]
+    status = ""
+    reason = ""
+    feedback = ""
 
-Notes:
-- Dotted lines = fold lines, arrows = movement direction.
-- Do not penalize for camera angle, lighting, or small positional differences.
+    if parts:
+        status_match = re.search(r"\b(PASS|FAIL)\b", parts[0], re.IGNORECASE)
+        if status_match:
+            status = status_match.group(1).upper()
 
-Response format (CRITICAL — STRICTLY FOLLOW):
-- reason: 반드시 한국어로만 작성. 영어 절대 금지. 최대 30자. 지시문이 영어여도 한국어로 번역하여 작성.
-- result: PASS or FAIL only.
+    if len(parts) >= 2:
+        reason = parts[1]
+    elif len(parts) == 1:
+        reason = re.sub(r"\b(PASS|FAIL)\b", "", parts[0], flags=re.IGNORECASE).strip(" \n\t:-[]")
 
-Example: "조립 형태가 확인됩니다." → PASS / "조립이 전혀 되지 않았습니다." → FAIL
-"""
+    if len(parts) >= 3:
+        feedback = " || ".join(parts[2:]).strip()
+
+    return status, reason, feedback
+
+
+def compact_vlm_text(text: str, max_len: int = 90) -> str:
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    if len(text) > max_len:
+        return text[:max_len].rstrip() + "..."
+    return text
 
 
 async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, force: bool = False, client=None) -> bool:
@@ -95,7 +122,8 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
         print(f"[PRELOAD] {step_label}: image missing: {full_manual_path}")
         return False
 
-    step_id = make_vlm_step_id(manual_img_path, step_desc)
+    lora_path = get_step_lora_path(step)
+    step_id = make_vlm_step_id(manual_img_path, step_desc, lora_path)
     if not force:
         if warmup and step_id in WARMED_STEP_IDS:
             print(f"[PRELOAD] {step_label}: prefix already warmed step_id={step_id}")
@@ -104,7 +132,6 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
             print(f"[PRELOAD] {step_label}: already registered step_id={step_id}")
             return True
 
-    prompt = build_vlm_prompt(step_desc)
     owns_client = client is None
     if owns_client:
         client = httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0))
@@ -116,8 +143,8 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
                 files={"manual_image": ("manual.jpg", f, "image/jpeg")},
                 data={
                     "step_id": step_id,
-                    "prompt": prompt,
                     "warmup": "true" if warmup else "false",
+                    **({"lora_path": lora_path} if lora_path else {}),
                 },
             )
 
@@ -136,6 +163,7 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
 
         print(
             f"[PRELOAD] {step_label}: step_id={step_id} "
+            f"lora_path={lora_path or 'base'} "
             f"warmed={payload.get('warmed')} elapsed={payload.get('elapsed_ms')}ms"
         )
         return True
@@ -175,9 +203,8 @@ async def preload_steps_to_gpu(steps: list):
                 print(f"⚠️ [PRELOAD] STEP {i + 1}: 이미지 없음: {full_manual_path}")
                 continue
 
-            step_id = make_vlm_step_id(manual_img_path, step_desc)
-            prompt = build_vlm_prompt(step_desc)
-
+            lora_path = get_step_lora_path(step)
+            step_id = make_vlm_step_id(manual_img_path, step_desc, lora_path)
             try:
                 with open(full_manual_path, "rb") as f:
                     resp = await client.post(
@@ -185,8 +212,8 @@ async def preload_steps_to_gpu(steps: list):
                         files={"manual_image": ("manual.jpg", f, "image/jpeg")},
                         data={
                             "step_id": step_id,
-                            "prompt": prompt,
                             "warmup": "true" if PRELOAD_WARMUP else "false",
+                            **({"lora_path": lora_path} if lora_path else {}),
                         },
                     )
 
@@ -199,6 +226,7 @@ async def preload_steps_to_gpu(steps: list):
                         ok_count += 1
                         print(
                             f"✅ [PRELOAD] {i + 1}/{len(steps)} step_id={step_id} "
+                            f"lora_path={lora_path or 'base'} "
                             f"warmed={payload.get('warmed')} elapsed={payload.get('elapsed_ms')}ms"
                         )
                     else:
@@ -260,6 +288,7 @@ async def _advance_after_pass_hold(token: int, current_idx: int, next_idx: int, 
     # ai_response 먼저 초기화 → 클라이언트가 이 poll에서 AI 응답 TTS 발동
     state["ai_result"] = "WAIT"
     state["ai_response"] = "잘 하셨습니다. 다음 단계로 넘어갑니다."
+    state["ai_feedback"] = ""
     state["pending_step_idx"] = None
     state["pass_hold_until"] = 0.0
 
@@ -270,11 +299,12 @@ async def _advance_after_pass_hold(token: int, current_idx: int, next_idx: int, 
     if force:
         state["step_locked"] = False
     state["ai_response"] = ""
+    state["ai_feedback"] = ""
     save_session()
     print(f"[PASS] advanced to STEP {next_idx + 1}")
 
 
-async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc=""):
+async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="", lora_path=""):
     global last_vlm_step_key
 
     call_start_perf = time.perf_counter()
@@ -310,9 +340,8 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
         if not os.path.exists(full_manual_path):
             return {"result": "ERROR", "reason": "이미지 없음"}
 
-        step_id = make_vlm_step_id(manual_img_path, step_desc)
-        prompt = build_vlm_prompt(step_desc)
-
+        lora_path = normalize_lora_path(lora_path or state.get("manual_lora", ""))
+        step_id = make_vlm_step_id(manual_img_path, step_desc, lora_path)
         client_start_perf = time.perf_counter()
         client = get_runpod_http_client()
         client_get_ms = elapsed_ms(client_start_perf)
@@ -324,7 +353,7 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
                 set_resp = await client.post(
                     RUNPOD_SET_STEP_URL,
                     files={"manual_image": ("manual.jpg", f, "image/jpeg")},
-                    data={"step_id": step_id, "prompt": prompt, "warmup": "false"},
+                    data={"step_id": step_id, "warmup": "false", **({"lora_path": lora_path} if lora_path else {})},
                 )
             set_step_ms = elapsed_ms(set_step_start_perf)
 
@@ -340,7 +369,8 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
 
             set_payload = set_resp.json()
             print(
-                f"⏱️ [MAIN->GPU SET_STEP] step_id={step_id} rtt={set_step_ms}ms "
+                f"⏱️ [MAIN->GPU SET_STEP] step_id={step_id} "
+                f"lora_path={lora_path or 'base'} rtt={set_step_ms}ms "
                 f"gpu_elapsed={set_payload.get('elapsed_ms')}ms warmed={set_payload.get('warmed')}",
                 flush=True,
             )
@@ -355,12 +385,21 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
         last_vlm_step_key = step_id
 
         pre_predict_ms = round(max(0.0, elapsed_ms(call_start_perf) - set_step_ms), 2)
+        request_prepare_start_perf = time.perf_counter()
+        camera_upload = ("camera.jpg", io.BytesIO(camera_frame_bytes), "image/jpeg")
+        predict_data = {
+            "step_id": step_id,
+            "web_send_time": "",
+            **({"lora_path": lora_path} if lora_path else {}),
+        }
+        request_prepare_ms = elapsed_ms(request_prepare_start_perf)
         predict_start_perf = time.perf_counter()
         web_send_time = time.time()
+        predict_data["web_send_time"] = str(web_send_time)
         pred_resp = await client.post(
             RUNPOD_PREDICT_URL,
-            files={"camera_image": ("camera.jpg", io.BytesIO(camera_frame_bytes), "image/jpeg")},
-            data={"step_id": step_id, "web_send_time": str(web_send_time)},
+            files={"camera_image": camera_upload},
+            data=predict_data,
         )
         response_recv_wall = time.time()
         predict_rtt_ms = elapsed_ms(predict_start_perf)
@@ -371,6 +410,23 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
             response_parse_ms = elapsed_ms(response_parse_start_perf)
 
             pred = payload.get("prediction", {"result": "UNKNOWN", "reason": "분석 오류"})
+            if not isinstance(pred, dict):
+                pred = {"result": "UNKNOWN", "reason": str(pred)}
+            raw_output = str(payload.get("raw_output") or pred.get("raw_output") or "")
+            raw_result, raw_reason, raw_feedback = parse_verdict_output(raw_output)
+            reason_result, reason_text, reason_feedback = parse_verdict_output(str(pred.get("reason", "")))
+            explicit_feedback = str(pred.get("feedback") or "").strip()
+            if raw_result:
+                pred["result"] = raw_result
+            elif reason_result and pred.get("result") in ("", "UNKNOWN", None):
+                pred["result"] = reason_result
+            if raw_reason:
+                pred["reason"] = raw_reason
+            elif reason_text:
+                pred["reason"] = reason_text
+            pred["feedback"] = raw_feedback or explicit_feedback or reason_feedback
+            if raw_output:
+                pred["raw_output"] = raw_output
             timing = payload.get("timing", {})
             if not isinstance(timing, dict):
                 timing = {}
@@ -378,24 +434,40 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
             gpu_vlm_ms = timing_float(timing.get("vlm_inference_ms", timing.get("sglang_latency_ms", 0.0)))
             gpu_proxy_total_ms = timing_float(timing.get("proxy_total_ms", timing.get("e2e_proxy_ms", 0.0)))
             gpu_proxy_overhead_ms = timing_float(timing.get("proxy_overhead_ms", timing.get("proxy_processing_ms", 0.0)))
+            proxy_step_prepare_ms = timing_float(timing.get("step_prepare_ms", 0.0))
+            proxy_camera_read_ms = timing_float(timing.get("camera_read_ms", 0.0))
+            proxy_base64_ms = timing_float(timing.get("base64_ms", 0.0))
+            proxy_payload_build_ms = timing_float(timing.get("payload_build_ms", 0.0))
+            proxy_parse_ms = timing_float(timing.get("parse_ms", 0.0))
+            proxy_pre_vlm_ms = round(
+                proxy_step_prepare_ms
+                + proxy_camera_read_ms
+                + proxy_base64_ms
+                + proxy_payload_build_ms,
+                2,
+            )
             transport_overhead_ms = round(max(0.0, predict_rtt_ms - gpu_proxy_total_ms), 2)
             total_call_ms = elapsed_ms(call_start_perf)
             image_send_ms = wall_delta_ms(timing.get("web_send_time", web_send_time), timing.get("proxy_recv_wall"))
             result_recv_ms = wall_delta_ms(timing.get("proxy_send_wall"), response_recv_wall)
+            send_estimated = False
             if transport_overhead_ms > 0.0 and (
                 image_send_ms <= 0.0
                 or result_recv_ms <= 0.0
                 or image_send_ms + result_recv_ms > predict_rtt_ms
             ):
+                send_estimated = True
                 image_send_ms = round(transport_overhead_ms * 0.8, 2)
                 result_recv_ms = round(transport_overhead_ms - image_send_ms, 2)
 
             timing.update(
                 {
+                    "main_lora_path": lora_path,
                     "main_set_step_called": set_step_called,
                     "main_set_step_ms": set_step_ms,
                     "main_pre_predict_ms": pre_predict_ms,
                     "main_http_client_get_ms": client_get_ms,
+                    "main_request_prepare_ms": request_prepare_ms,
                     "main_camera_bytes": camera_bytes_len,
                     "main_camera_kb": camera_kb,
                     "main_predict_rtt_ms": predict_rtt_ms,
@@ -404,42 +476,35 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
                     "main_transport_overhead_ms": transport_overhead_ms,
                     "main_image_send_ms": image_send_ms,
                     "main_result_recv_ms": result_recv_ms,
+                    "main_send_estimated": send_estimated,
                     "main_e2e_ms": total_call_ms,
                     "main_total_call_ms": total_call_ms,
                 }
             )
             pred["_timing"] = timing
 
-            set_step_label = "yes" if set_step_called else "no"
-            result_label = pred.get("result", "?")
             _C = "\033[0m"       # reset
-            _G = "\033[92m"      # green  — PASS
-            _R = "\033[91m"      # red    — FAIL
             _Y = "\033[93m"      # yellow — timing
             _D = "\033[90m"      # dark   — detail
-            result_color = _G if result_label == "PASS" else (_R if result_label == "FAIL" else _C)
+            send_label = "SEND~" if send_estimated else "SEND"
             print(
-                f"{_Y}⏱️  SEND:{image_send_ms:.0f}ms │ VLM:{gpu_vlm_ms:.0f}ms │ RECV:{result_recv_ms:.0f}ms │ E2E:{total_call_ms:.0f}ms{_C}  "
-                f"{result_color}[{result_label}]{_C}",
+                f"{_Y}⏱️  {send_label}:{image_send_ms:.0f}ms │ VLM:{gpu_vlm_ms:.0f}ms │ "
+                f"RECV:{result_recv_ms:.0f}ms │ E2E:{total_call_ms:.0f}ms{_C}",
                 flush=True,
             )
             print(
-                f"{_D}   set_step={set_step_label}({set_step_ms:.0f}ms) pre={pre_predict_ms:.0f}ms "
-                f"cam={camera_kb}KB rtt={predict_rtt_ms:.0f}ms gpu_total={gpu_proxy_total_ms:.0f}ms{_C}",
+                f"{_D}   SEND detail prep={request_prepare_ms:.1f}ms | "
+                f"wire+ingress+multipart={image_send_ms:.0f}ms | "
+                f"proxy_pre_vlm={proxy_pre_vlm_ms:.1f}ms "
+                f"(step={proxy_step_prepare_ms:.1f}, read={proxy_camera_read_ms:.1f}, "
+                f"b64={proxy_base64_ms:.1f}, payload={proxy_payload_build_ms:.1f}) | "
+                f"proxy_parse={proxy_parse_ms:.1f}ms | proxy_overhead={gpu_proxy_overhead_ms:.1f}ms | "
+                f"send_estimated={'yes' if send_estimated else 'no'}{_C}",
                 flush=True,
             )
 
-            reason = pred.get("reason", "")
-            if reason:
-                for sep in [". ", ".\n", "\n"]:
-                    if sep in reason:
-                        first = reason.split(sep)[0].strip()
-                        if len(first) > 5:
-                            reason = first
-                            break
-                if len(reason) > 60:
-                    reason = reason[:60] + "..."
-                pred["reason"] = reason
+            pred["reason"] = compact_vlm_text(pred.get("reason", ""), 90)
+            pred["feedback"] = compact_vlm_text(pred.get("feedback", ""), 110)
 
             return pred
 
@@ -530,10 +595,11 @@ async def run_vlm_analysis_once(source: str = "manual") -> dict:
         return {"status": "error", "message": "현재 STEP 이미지 없음", "source": source}
 
     desc = current_step.get("desc", "")
+    lora_path = get_step_lora_path(current_step)
     start = time.perf_counter()
     state["is_processing"] = True
     try:
-        prediction = await call_runpod_inference(image_url, vlm_frame, desc)
+        prediction = await call_runpod_inference(image_url, vlm_frame, desc, lora_path)
     finally:
         state["is_processing"] = False
 
@@ -545,13 +611,17 @@ async def run_vlm_analysis_once(source: str = "manual") -> dict:
     if prediction and prediction.get("result") != "ERROR":
         result = prediction.get("result", "UNKNOWN")
         reason = prediction.get("reason", "분석 완료")
+        feedback = prediction.get("feedback", "")
         apply_vlm_timing(prediction.get("_timing", {}))
 
-        e2e_s = state["vlm_total_s"] or duration
-        state["ai_response"] = f"[{result}] {reason}"
+        e2e_ms = float(state.get("vlm_e2e_ms", 0.0) or 0.0)
+        e2e_s = (e2e_ms / 1000.0) if e2e_ms > 0 else duration
+        e2e_label = f" ({e2e_s:.1f}s)" if e2e_s > 0 else ""
+        state["ai_response"] = f"[{result}] {reason}{e2e_label}"
+        state["ai_feedback"] = feedback
         state["ai_result"] = result
         if result == "PASS" and idx + 1 < len(state["manual_steps"]):
-            state["ai_response"] = f"[{result}] {reason} - 3초 후 다음 단계로 이동합니다."
+            state["ai_response"] = f"[{result}] {reason}{e2e_label} - 3초 후 다음 단계로 이동합니다."
             schedule_pass_transition(idx, force=True)
         print(f"[VLM:{source}] {duration}s | {result}")
 
@@ -565,6 +635,7 @@ async def run_vlm_analysis_once(source: str = "manual") -> dict:
         }
 
     err = prediction.get("reason", "응답 없음") if prediction else "응답 없음"
+    state["ai_feedback"] = ""
     print(f"[VLM:{source} ERROR] {err}")
     return {"status": "error", "message": f"VLM 실패: {err}", "source": source}
 
@@ -596,7 +667,13 @@ async def coaching_loop():
         if not state.get("latest_frame") and state["ai_result"] not in ("WAIT",):
             state["ai_result"] = "WAIT"
             state["ai_response"] = "모바일 카메라를 연결해 주세요."
-        await asyncio.sleep(AUTO_VLM_INTERVAL_SECONDS)
+            state["ai_feedback"] = ""
+        try:
+            interval_s = float(state.get("auto_infer_interval_s", AUTO_VLM_INTERVAL_SECONDS))
+        except (TypeError, ValueError):
+            interval_s = AUTO_VLM_INTERVAL_SECONDS
+        interval_s = max(1.0, min(30.0, interval_s))
+        await asyncio.sleep(interval_s)
         if state.get("auto_infer_enabled", False):
             await run_auto_vlm_analysis()
         continue
@@ -606,23 +683,34 @@ async def coaching_loop():
             idx = state["current_step_idx"]
             if idx < len(state["manual_steps"]):
                 current_step = state["manual_steps"][idx]
-                prediction = await call_runpod_inference(current_step["image_url"], vlm_frame, current_step.get("desc", ""))
+                prediction = await call_runpod_inference(
+                    current_step["image_url"],
+                    vlm_frame,
+                    current_step.get("desc", ""),
+                    get_step_lora_path(current_step),
+                )
                 if prediction:
                     result = prediction.get("result", "UNKNOWN")
                     reason = prediction.get("reason", "분석 중...")
+                    feedback = prediction.get("feedback", "")
                     apply_vlm_timing(prediction.get("_timing", {}))
 
-                    e2e_s = state["vlm_total_s"] or (state["vlm_e2e_ms"] / 1000.0)
+                    e2e_ms = float(state.get("vlm_e2e_ms", 0.0) or 0.0)
+                    e2e_s = (e2e_ms / 1000.0) if e2e_ms > 0 else float(state.get("vlm_total_s", 0.0) or 0.0)
+                    e2e_label = f" ({e2e_s:.1f}s)" if e2e_s > 0 else ""
                     if result == "PASS" and not state["step_locked"] and idx + 1 < len(state["manual_steps"]):
-                        state["ai_response"] = f"[{result}] {reason} - 3초 후 다음 단계로 이동합니다."
+                        state["ai_response"] = f"[{result}] {reason}{e2e_label} - 3초 후 다음 단계로 이동합니다."
+                        state["ai_feedback"] = feedback
                         state["ai_result"] = result
                         schedule_pass_transition(idx)
                     else:
-                        state["ai_response"] = f"[{result}] {reason}"
+                        state["ai_response"] = f"[{result}] {reason}{e2e_label}"
+                        state["ai_feedback"] = feedback
                         state["ai_result"] = result
             await asyncio.sleep(3.0)
         else:
             if not state["latest_frame"] and state["ai_result"] not in ("WAIT",):
                 state["ai_result"] = "WAIT"
                 state["ai_response"] = "모바일 카메라를 연결해 주세요."
+                state["ai_feedback"] = ""
             await asyncio.sleep(1.0)
