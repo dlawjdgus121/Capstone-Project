@@ -365,6 +365,23 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/status")
     async def get_status():
+        hardware_limit_gesture = state.get("hardware_limit_gesture", "NONE")
+        hardware_limit_active = (
+            hardware_limit_gesture in ("LIMIT_TOP", "LIMIT_BOTTOM")
+            and time.time() < float(state.get("hardware_limit_until", 0.0) or 0.0)
+        )
+        current_gesture = state.get("gesture", "NONE")
+        current_stepper_state = state.get("stepper_state", "STOP")
+        if hardware_limit_active:
+            display_gesture = hardware_limit_gesture
+        elif current_gesture in ("LIMIT_TOP", "LIMIT_BOTTOM") or (
+            current_gesture in ("UP", "DOWN")
+            and current_stepper_state == "STOP"
+        ):
+            display_gesture = "NONE"
+        else:
+            display_gesture = current_gesture
+
         return {
             "manual_steps": state["manual_steps"],
             "is_analyzed": state["is_analyzed"],
@@ -410,7 +427,7 @@ def register_routes(app: FastAPI) -> None:
             "elapsed_time": get_elapsed_time(),
             "auto_infer_enabled": state.get("auto_infer_enabled", False),
             "auto_infer_interval_s": state.get("auto_infer_interval_s", 5.0),
-            "gesture": state.get("gesture", "NONE"),
+            "gesture": display_gesture,
             "gesture_holding_active": state.get("gesture_holding_active", False),
             "gesture_hold_elapsed": state.get("gesture_hold_elapsed", 0.0),
             "gesture_hold_required": state.get("gesture_hold_required", 1.5),
@@ -428,6 +445,14 @@ def register_routes(app: FastAPI) -> None:
             "camera_setup_countdown_started_at": state.get("camera_setup_countdown_started_at", 0.0),
             "camera_setup_shoulder_y": state.get("camera_setup_shoulder_y"),
             "camera_setup_shoulder_line_y": state.get("camera_setup_shoulder_line_y", 0.48),
+            "hardware_notice_message": (
+                state.get("hardware_notice_message", "")
+                if time.time() < float(state.get("hardware_notice_until", 0.0) or 0.0)
+                else ""
+            ),
+            "return_home_active": state.get("return_home_active", False),
+            "return_home_done": state.get("return_home_done", False),
+            "hand_recognition_enabled": state.get("hand_recognition_enabled", False),
         }
 
     @app.post("/reset")
@@ -455,7 +480,7 @@ def register_routes(app: FastAPI) -> None:
                 "gesture_hold_elapsed": 0.0,
                 "gesture_hold_required": 1.5,
                 "gesture_hold_progress": 0.0,
-                "tracking_active": True,
+                "tracking_active": False,
                 "stepper_state": "STOP",
                 "camera_setup_active": False,
                 "camera_setup_phase": "idle",
@@ -465,6 +490,13 @@ def register_routes(app: FastAPI) -> None:
                 "camera_setup_countdown_started_at": 0.0,
                 "camera_setup_shoulder_y": None,
                 "camera_setup_shoulder_line_y": 0.48,
+                "hardware_limit_gesture": "NONE",
+                "hardware_limit_until": 0.0,
+                "hardware_notice_message": "",
+                "hardware_notice_until": 0.0,
+                "return_home_active": False,
+                "return_home_done": False,
+                "hand_recognition_enabled": False,
             }
         )
         clear_vlm_timing()
@@ -487,6 +519,33 @@ def register_routes(app: FastAPI) -> None:
         interval_s = max(1.0, min(30.0, interval_s))
         state["auto_infer_interval_s"] = round(interval_s, 1)
         return {"status": "ok", "auto_infer_interval_s": state["auto_infer_interval_s"]}
+
+    @app.post("/enable-hand-recognition")
+    async def enable_hand_recognition():
+        state["hand_recognition_enabled"] = True
+        return {"status": "ok", "hand_recognition_enabled": True}
+
+    @app.post("/disconnect-client")
+    async def disconnect_client():
+        returning_home = state.get("return_home_active", False)
+        if not returning_home:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.sendto(b"S", (ESP32_IP, UDP_PORT))
+            except Exception as e:
+                print(f"[HW] stop on browser disconnect failed: {type(e).__name__}: {e}")
+            hw_state["current_stepper_state"] = "STOP"
+            state["stepper_state"] = "STOP"
+        hw_state["is_servo_active"] = False
+        state["tracking_active"] = False
+        state["hand_recognition_enabled"] = False
+        state["gesture"] = "NONE"
+        state["gesture_holding_active"] = False
+        state["gesture_hold_elapsed"] = 0.0
+        state["gesture_hold_progress"] = 0.0
+        clear_frame_state()
+        print("[SYS] browser disconnected — hand recognition disabled")
+        return {"status": "ok", "hand_recognition_enabled": False}
 
     @app.post("/start-camera-setup")
     async def start_camera_setup():
@@ -513,19 +572,49 @@ def register_routes(app: FastAPI) -> None:
         print("[HW] STEPPER STOP by keyboard")
         return {"status": "ok"}
 
+# 🎯 [추가] 위쪽 화살표 상승 명령
+    @app.post("/up-stepper")
+    async def up_stepper():
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b"U", (ESP32_IP, UDP_PORT))
+        hw_state["current_stepper_state"] = "UP"
+        state["stepper_state"] = "UP"
+        print("[HW] STEPPER UP by keyboard")
+        return {"status": "ok"}
+
+    # 🎯 [추가] 아래쪽 화살표 하강 명령
+    @app.post("/down-stepper")
+    async def down_stepper():
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b"D", (ESP32_IP, UDP_PORT))
+        hw_state["current_stepper_state"] = "DOWN"
+        state["stepper_state"] = "DOWN"
+        print("[HW] STEPPER DOWN by keyboard")
+        return {"status": "ok"}
+
     @app.post("/shutdown")
     async def shutdown():
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.sendto(b"S", (ESP32_IP, UDP_PORT))
-        hw_state["current_stepper_state"] = "STOP"
+            sock.sendto(b"U", (ESP32_IP, UDP_PORT))
+        
+        hw_state["current_stepper_state"] = "UP"
         hw_state["is_servo_active"] = False
-        state["stepper_state"] = "STOP"
+        state["stepper_state"] = "UP"
         state["tracking_active"] = False
+        state["hand_recognition_enabled"] = False
+        state["gesture"] = "NONE"
+        state["gesture_holding_active"] = False
+        state["gesture_hold_elapsed"] = 0.0
+        state["gesture_hold_progress"] = 0.0
+        state["return_home_active"] = True
+        state["return_home_done"] = False
+        state["hardware_notice_message"] = "시스템을 종료하여 카메라를 원점으로 복귀합니다"
+        state["hardware_notice_until"] = time.time() + 5.0
         state["camera_setup_active"] = False
         state["camera_setup_phase"] = "idle"
-        state["camera_setup_message"] = "브라우저 종료 - 시스템 종료"
-        print("[SYS] shutdown request received — stepper stop and tracking disabled")
-        threading.Timer(0.25, lambda: os._exit(0)).start()
+        state["camera_setup_message"] = "시스템을 종료하여 카메라를 원점으로 복귀합니다"
+        print("[SYS] shutdown request received — returning camera home")
+        
         return {"status": "ok", "message": "shutdown initiated"}
 
     @app.post("/reset-camera-setup")

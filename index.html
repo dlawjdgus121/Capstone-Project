@@ -461,6 +461,10 @@ function MobileView() {
     const [currentAbs, setCurrentAbs] = useState(0);
 
     useEffect(() => {
+        let activeRoom = null;
+        let activeTracks = null;
+        let pingInterval = null;
+
         const init = async () => {
             try {
                 // /config에서 LiveKit 접속 정보 수신 (토큰 하드코딩 제거)
@@ -471,6 +475,7 @@ function MobileView() {
 
                 const LK   = window.LivekitClient;
                 const room = new LK.Room();
+                activeRoom = room;
 
                 room.on('dataReceived', (payload) => {
                     try {
@@ -496,6 +501,7 @@ function MobileView() {
                         frameRate: { ideal: 30, min: 24 },
                     }
                 });
+                activeTracks = tracks;
                 const videoTrack = tracks.find(t => t.kind === 'video');
                 if (videoRef.current && videoTrack) videoTrack.attach(videoRef.current);
                 await room.localParticipant.publishTrack(videoTrack, {
@@ -508,7 +514,7 @@ function MobileView() {
                 });
                 setConnected(true);
 
-                const interval = setInterval(() => {
+                pingInterval = setInterval(() => {
                     if (room.state === 'connected') {
                         const ping = JSON.stringify({ type:"ping", send_time:Date.now() });
                         room.localParticipant.publishData(
@@ -516,10 +522,27 @@ function MobileView() {
                         );
                     }
                 }, 50);
-                return () => { clearInterval(interval); room.disconnect(); };
             } catch(e) { alert('카메라 또는 LiveKit 연결 오류: ' + e.message); }
         };
         init();
+    // index.html 의 MobileView 컴포넌트 내부
+
+        const handleUnload = () => {
+            if (activeRoom) activeRoom.disconnect();
+            if (activeTracks) {
+                activeTracks.forEach(track => track.stop());
+            }
+            fetch('/disconnect-client', { method: 'POST', keepalive: true }).catch(() => {});
+        };
+        window.addEventListener('beforeunload', handleUnload);
+
+        // Cleanup 함수
+        return () => {
+            window.removeEventListener('beforeunload', handleUnload);
+            if (pingInterval) clearInterval(pingInterval); 
+            if (activeRoom) activeRoom.disconnect();
+            if (activeTracks) activeTracks.forEach(track => track.stop());
+        };
     }, []);
 
     return (
@@ -877,7 +900,22 @@ function HelpModal({ onClose }) {
     );
 }
 
-function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart }) {
+function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart, onShutdown, isShuttingDown, shutdownMessage }) {
+    // 🔍 시스템 종료 중일 때 보여줄 화면
+    if (isShuttingDown) {
+        return (
+            <div className="modal-back">
+                <div style={{textAlign:'center', maxWidth:480, padding:40, animation:'step-in 0.4s ease-out', background:'var(--bg-2)', borderRadius:20, boxShadow:'0 30px 60px rgba(0,0,0,0.12)'}}>
+                    <div className="label" style={{marginBottom:18, color:'var(--bad)'}}>● Shutting Down</div>
+                    <h2 style={{fontSize:26, fontWeight:500, lineHeight:1.5, letterSpacing:'-0.02em', margin:'0 0 28px', color:'var(--ink)', wordBreak:'keep-all'}}>
+                        {shutdownMessage || <>시스템을 종료하여<br/>카메라를 원점으로 복귀합니다.</>}
+                    </h2>
+                    <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: 'var(--bad)', animation: 'live-pulse 1s infinite' }}/>
+                </div>
+            </div>
+        );
+    }
+    
     return (
         <div className="modal-back">
             <div style={{textAlign:'center', maxWidth:480, padding:32, animation:'step-in 0.4s ease-out'}}>
@@ -897,8 +935,11 @@ function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart }) {
                     </p>
                 )}
                 {!(elapsedSeconds > 0) && <div style={{marginBottom:36}}/>}
+                
+                {/* 🔍 버튼 그룹 내부에 시스템 종료 버튼 추가 및 레이아웃 조정 */}
                 <div style={{display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap'}}>
                     <button className="btn-quiet" onClick={onRestart}>← 처음으로</button>
+                    <button className="btn-quiet" style={{borderColor:'var(--bad)', color:'var(--bad)'}} onClick={onShutdown}>🛑 시스템 종료</button>
                     <button className="btn-spline" onClick={async () => {
                         await fetch('/reset',{method:'POST'}).catch(()=>{});
                         window.location.reload();
@@ -908,7 +949,6 @@ function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart }) {
         </div>
     );
 }
-
 function UploadProgress({ status, onCancel }) {
     const fileInfo = status.file_info || { name:'', pages:0, steps:0 };
     const preview  = status.uploaded_preview || '';
@@ -1032,7 +1072,7 @@ function PCView() {
     const params = new URLSearchParams(window.location.search);
     const demoStart = params.get('demo');
     const isDemo = !!demoStart;
-
+    const [shutdownToast, setShutdownToast] = useState(false);
     const [view, setView] = useState(demoStart || 'landing');
     const [status, setStatus] = useState(isDemo ? {
         ai_response: '왼쪽 모서리를 조금 더 안쪽으로 접어주세요.',
@@ -1179,6 +1219,28 @@ function PCView() {
         });
     }, [ttsOn, ttsRate]);
 
+    const handleShutdown = useCallback(async () => {
+        setShutdownToast(true);
+        try {
+            await fetch('/shutdown', { method: 'POST' });
+        } catch(e) {
+            console.error("Shutdown request failed:", e);
+        }
+    }, []);
+
+    /* 브라우저 창/탭 닫기(X 버튼) 감지 및 손 인식 중지 */
+    useEffect(() => {
+        const handleUnload = () => {
+            if (pcRoomRef.current) {
+                pcRoomRef.current.disconnect();
+            }
+            fetch('/disconnect-client', { method: 'POST', keepalive: true }).catch(() => {});
+        };
+        window.addEventListener('beforeunload', handleUnload);
+        return () => {
+            window.removeEventListener('beforeunload', handleUnload);
+        };
+    }, []);
 
     const inputRef = useRef(null);
     const listRef = useRef(null);
@@ -1193,7 +1255,7 @@ function PCView() {
     const [cameraSetupCompleteNotice, setCameraSetupCompleteNotice] = useState(false);
     const cameraSetupPromptedRef = useRef(false);
     const cameraSetupCompleteShownRef = useRef(false);
-
+    
     /* QR 코드 생성 — view가 바뀔 때마다 재실행해서 터널 URL 반영 */
     useEffect(() => {
         if (view !== 'coach') return;  // 코치 화면일 때만 갱신
@@ -1319,31 +1381,8 @@ function PCView() {
         }
     }, [status.has_frame, view]);
 
-    useEffect(() => {
-        if (view !== 'coach') {
-            cameraSetupPromptedRef.current = false;
-            cameraSetupCompleteShownRef.current = false;
-            setShowCameraSetupPrompt(false);
-            setCameraSetupCompleteNotice(false);
-            return;
-        }
-        if (!status.has_frame) {
-            cameraSetupPromptedRef.current = false;
-            cameraSetupCompleteShownRef.current = false;
-            setShowCameraSetupPrompt(false);
-            setCameraSetupCompleteNotice(false);
-            return;
-        }
-        if (!cameraSetupPromptedRef.current && !status.camera_setup_done) {
-            cameraSetupPromptedRef.current = true;
-            setShowCameraSetupPrompt(true);
-        }
-    }, [status.has_frame, status.camera_setup_done, view]);
+    
 
-    const startCameraSetup = useCallback(() => {
-        setShowCameraSetupPrompt(false);
-        fetch('/start-camera-setup', {method:'POST'}).catch(()=>{});
-    }, []);
 
     useEffect(() => {
         if (view !== 'coach' || !status.camera_setup_done || cameraSetupCompleteShownRef.current) return;
@@ -1420,6 +1459,9 @@ function PCView() {
                 const data = await res.json();
                 setStatus(data);
                 statusRef.current = data;
+                if (view === 'coach' && !shutdownToast && data.hand_recognition_enabled === false) {
+                    fetch('/enable-hand-recognition', { method:'POST' }).catch(() => {});
+                }
                 if (data.has_frame) setStreamAlive(true);
                 if (view === 'coach' && data.has_frame && data.is_processing && !prevProcessingRef.current) {
                     triggerShutterDelayed();
@@ -1433,7 +1475,7 @@ function PCView() {
             } catch(e){}
         }, 250);
         return () => clearInterval(t);
-    }, [view, uploading, isNewStart, settingsOpen, triggerShutterDelayed]);
+    }, [view, uploading, isNewStart, settingsOpen, triggerShutterDelayed, shutdownToast]);
 
     const uploadFiles = useCallback(async (files) => {
         if (!files || !files.length) return;
@@ -1666,23 +1708,63 @@ function PCView() {
         }
     }, [view]);
 
+    useEffect(() => {
+        const endpoint = view === 'coach' ? '/enable-hand-recognition' : '/disconnect-client';
+        fetch(endpoint, { method:'POST' }).catch(() => {});
+    }, [view]);
+
+    /* keyboard nav */
     /* keyboard nav */
     useEffect(() => {
         if (view !== 'coach') return;
-        const h = e => {
+        
+        const handleKeyDown = e => {
+            // S 키: 기존 강제 정지
             if ((e.key.toLowerCase()==='s' || e.key==='ㄴ') && !e.repeat) {
                 fetch('/stop-stepper', { method:'POST' }).catch(() => {});
                 return;
             }
+            
+            // 🎯 위 화살표: 상승 (누르고 있는 동안 스크롤 방지 + 1회만 명령 전송)
+            if (e.key === 'ArrowUp' && !e.repeat) {
+                e.preventDefault();
+                fetch('/up-stepper', { method:'POST' }).catch(() => {});
+                return;
+            }
+            
+            // 🎯 아래 화살표: 하강
+            if (e.key === 'ArrowDown' && !e.repeat) {
+                e.preventDefault();
+                fetch('/down-stepper', { method:'POST' }).catch(() => {});
+                return;
+            }
+
+            // 위/아래 방향키를 꾹 누르고 있을 때 브라우저 스크롤이 내려가는 것을 방지
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault();
+            }
+
             if (modalImg) return;
             if (e.key==='ArrowRight') goToNext();
             if (e.key==='ArrowLeft') goToPrev();
             if (e.key.toLowerCase()==='l' && !e.repeat) fetch('/servo-angle', { method:'POST' }).catch(() => {});
         };
-        window.addEventListener('keydown', h);
-        return () => window.removeEventListener('keydown', h);
-    }, [view, goToNext, goToPrev, modalImg]);
 
+        // 🎯 키보드에서 손을 떼는 순간 정지 명령 전송
+        const handleKeyUp = e => {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                fetch('/stop-stepper', { method:'POST' }).catch(() => {});
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
+    }, [view, goToNext, goToPrev, modalImg]);
     const isFirstStep = activeIdx <= 0;
     const isLastStep  = activeIdx >= totalSteps-1;
     const isLocked    = userSelectedIdx !== null || status.step_locked;
@@ -1691,9 +1773,12 @@ function PCView() {
     const gestureHoldRequired = Number(status.gesture_hold_required || 1.5);
 
     const safePersistentHardwareNotice =
+        activeGesture === 'LIMIT_TOP' ? '최상단에 도달하여 상승을 멈춥니다' :
+        activeGesture === 'LIMIT_BOTTOM' ? '최하단에 도달하여 하강을 멈춥니다' :
         activeGesture === 'UP' ? '리니어슬라이드 상승 중' :
         activeGesture === 'DOWN' ? '리니어슬라이드 하강 중' :
         null;
+
     const safeHoldingNotice =
         gestureHolding && activeGesture === 'HOLDING_TRACKING_OFF' ? '손 추적 중지 인식 중' :
         gestureHolding && activeGesture === 'HOLDING_TRACKING_ON' ? '손 추적 재개 인식 중' :
@@ -1705,8 +1790,9 @@ function PCView() {
         cameraSetupCompleteNotice ? '카메라 세팅이 완료됐습니다. 코칭을 시작합니다' :
         status.camera_setup_active ? (status.camera_setup_message || '카메라 초기 세팅 중') :
         null;
-    const topRightNotice = cameraSetupNotice || safeHoldingNotice || hwNotice || safePersistentHardwareNotice || safeTrackingNotice;
-    const hardwareBoxActive = !!(cameraSetupNotice || safeHoldingNotice || hwNotice || safePersistentHardwareNotice);
+    const hardwareNoticeMessage = status.hardware_notice_message || null;
+    const topRightNotice = hardwareNoticeMessage || cameraSetupNotice || safeHoldingNotice || hwNotice || safePersistentHardwareNotice || safeTrackingNotice;
+    const hardwareBoxActive = !!(hardwareNoticeMessage || cameraSetupNotice || safeHoldingNotice || hwNotice || safePersistentHardwareNotice);
     const cameraSetupPhase = status.camera_setup_phase || 'idle';
     const cameraSetupCountdown = Number(status.camera_setup_countdown || 0);
     const cameraSetupGuideTitle =
@@ -1746,8 +1832,9 @@ function PCView() {
         return () => clearInterval(t);
     }, [activeGesture, gestureHolding, gestureHoldRequired, status.gesture_hold_elapsed]);
 
+    // 리미트 도달 문구 및 동작 상태가 디바운스 타이머에 의해 가려지지 않도록 차단 조건을 추가한 useEffect
     useEffect(() => {
-        if (activeGesture.startsWith('HOLDING_') || activeGesture === 'UP' || activeGesture === 'DOWN') {
+        if (activeGesture.startsWith('HOLDING_') || activeGesture === 'UP' || activeGesture === 'DOWN' || activeGesture === 'LIMIT_TOP' || activeGesture === 'LIMIT_BOTTOM') {
             setHwNotice(null);
             return;
         }
@@ -1872,8 +1959,7 @@ function PCView() {
                 </div>
             )}
 
-            {showComplete && <CompletionOverlay totalSteps={totalSteps} elapsedSeconds={completeTime} onRestart={() => { setShowComplete(false); forceSetStep(0); }}/> }
-            {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
+           {showComplete && <CompletionOverlay totalSteps={totalSteps} elapsedSeconds={completeTime} onRestart={() => { setShowComplete(false); forceSetStep(0); }} onShutdown={handleShutdown} isShuttingDown={shutdownToast} shutdownMessage={status.hardware_notice_message || (status.return_home_done ? '카메라 원점 복귀가 끝났습니다' : null)}/> }
             {modalImg && <ImageModal src={modalImg.src} title={modalImg.title} onClose={() => setModalImg(null)}/>}
             {cropOpen && <CropModal onAdd={addCropped} onClose={() => setCropOpen(false)}/>}
             {sessionsOpen && <SessionsModal
@@ -1886,6 +1972,8 @@ function PCView() {
                     <button onClick={cancelCountdown} style={{background:'transparent', color:'var(--bg)', border:'none', opacity:0.6, cursor:'pointer', fontFamily:'var(--font-mono)', fontSize:11}}>취소</button>
                 </div>
             )}
+            {/* 🔍 여기에 추가: 시스템 종료 토스트 */}
+            
 
             {/* LANDING */}
             {view === 'landing' && (
@@ -2225,6 +2313,30 @@ function PCView() {
                                                 </div>
                                                 <div className="toggle" data-on={mirrorOn}/>
                                             </button>
+                                            <button
+    onClick={async () => {
+        try {
+            await fetch('/start-camera-setup', {
+                method: 'POST'
+            });
+            setSettingsOpen(false);
+        } catch (err) {
+            console.error(err);
+        }
+    }}
+    style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
+            padding:'10px 8px', background:'transparent', border:'none',
+            cursor:'pointer', borderRadius:2, transition:'background 0.15s'}}
+    onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
+    onMouseLeave={e=>e.currentTarget.style.background='transparent'}
+>
+    <div style={{textAlign:'left'}}>
+        <div style={{fontSize:13, fontWeight:500, color:'var(--ink)'}}>카메라 세팅</div>
+        <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:2}}>
+            자동 위치 보정 시작
+        </div>
+    </div>
+</button>
                                         </div>
                                     </div>
                                 )}

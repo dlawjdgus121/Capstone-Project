@@ -350,18 +350,6 @@ void loop() {
         stepper.move(2000000);
       }
 
-      else if (firstChar == 'M') {
-        // 속도 제어: M{speed}
-        // 예: M10000 = 최대 속도 10000
-        //     M20000 = 최대 속도 20000 (빠름)
-        float newSpeed = input.substring(1).toFloat();
-        if (newSpeed > 0 && newSpeed <= 30000.0) {
-          max_speed = newSpeed;
-          stepper.setMaxSpeed(max_speed);
-          Serial.printf("[STEPPER] Speed changed to %.0f\n", max_speed);
-        }
-      }
-
       else if (firstChar == 'S') {
         stepper.stop();
         stepper.setCurrentPosition(stepper.currentPosition());

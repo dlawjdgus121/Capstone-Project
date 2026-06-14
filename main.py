@@ -4,6 +4,7 @@ import re as _re
 import socket
 import subprocess
 import threading
+import time
 from contextlib import asynccontextmanager, suppress
 
 import uvicorn
@@ -37,8 +38,64 @@ def align_servo_to_center() -> None:
         print(f"[SERVO] startup align failed: {type(e).__name__}: {e}")
 
 
+def start_udp_listener():
+    def _listen():
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind(("0.0.0.0", UDP_PORT))
+            print(f"🎧 [UDP] ESP32 상태 수신 리스너 시작 (Port: {UDP_PORT})")
+            while True:
+                try:
+                    data, addr = sock.recvfrom(1024)
+                    msg = data.decode('utf-8').strip()
+                    
+                    if msg == "LIMIT_TOP":
+                        if state.get("return_home_active", False):
+                            state["hardware_notice_message"] = "카메라 원점 복귀가 끝났습니다"
+                            state["hardware_notice_until"] = time.time() + 4.0
+                            state["return_home_active"] = False
+                            state["return_home_done"] = True
+                            state["camera_setup_message"] = "카메라 원점 복귀가 끝났습니다"
+                        else:
+                            state["hardware_notice_message"] = ""
+                            state["hardware_notice_until"] = 0.0
+                        state["hardware_limit_gesture"] = "LIMIT_TOP"
+                        state["hardware_limit_until"] = time.time() + 2.0
+                        state["stepper_state"] = "STOP"
+                        state["gesture"] = "NONE"
+                        state["gesture_holding_active"] = False
+                        state["gesture_hold_elapsed"] = 0.0
+                        state["gesture_hold_progress"] = 0.0
+                        hw_state["current_stepper_state"] = "STOP"
+                        print("🚨 [ESP32] 최상단 리미트 스위치 도달! 상승 강제 정지")
+                    elif msg == "LIMIT_BOTTOM":
+                        if state.get("return_home_active", False):
+                            state["hardware_notice_message"] = "카메라 원점 복귀가 끝났습니다"
+                            state["hardware_notice_until"] = time.time() + 4.0
+                            state["return_home_active"] = False
+                            state["return_home_done"] = True
+                            state["camera_setup_message"] = "카메라 원점 복귀가 끝났습니다"
+                        else:
+                            state["hardware_notice_message"] = ""
+                            state["hardware_notice_until"] = 0.0
+                        state["hardware_limit_gesture"] = "LIMIT_BOTTOM"
+                        state["hardware_limit_until"] = time.time() + 2.0
+                        state["stepper_state"] = "STOP"
+                        state["gesture"] = "NONE"
+                        state["gesture_holding_active"] = False
+                        state["gesture_hold_elapsed"] = 0.0
+                        state["gesture_hold_progress"] = 0.0
+                        hw_state["current_stepper_state"] = "STOP"
+                        print("🚨 [ESP32] 최하단 리미트 스위치 도달! 하강 강제 정지")
+                    elif msg.startswith("LOG:"):
+                        # 🔍 아두이노가 보낸 로그 메시지를 파이썬 터미널에 출력
+                        print(f"📟 [ESP32 LOG] {msg[4:]}") 
+                except Exception:
+                    pass
+    threading.Thread(target=_listen, daemon=True).start()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    start_udp_listener() # 🔍 앱 시작 시 리스너 실행 추가
     restored = load_session()
     ensure_runpod_http_client()
     align_servo_to_center()
