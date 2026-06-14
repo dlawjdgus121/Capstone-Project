@@ -8,4 +8,5 @@ opencv-python
 numpy
 mediapipe
 pillow
+pypdfium2
 opendataloader-pdf

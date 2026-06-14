@@ -18,6 +18,49 @@ from config import BASE_DIR, GEMINI_URL, OUTPUT_DIR, PRELOAD_MANUAL_STEPS, RUNPO
 from state import save_session, state
 from vlm import REGISTERED_STEP_IDS, WARMED_STEP_IDS, preload_steps_to_gpu
 
+
+def _render_pdf_to_jpegs(pdf_path, out_prefix, dpi, first_page=None, last_page=None):
+    """PDF → JPEG 렌더링(크로스플랫폼).
+
+    pypdfium2(pip 휠, Windows/Linux/macOS 외부 바이너리 불필요)를 우선 사용하고,
+    없으면 Poppler `pdftoppm`으로 폴백한다. 출력 파일명은 pdftoppm과 동일하게
+    `{prefix}-{n}.jpg` 형식(문서 전체 페이지 자릿수로 zero-pad)이라 기존 sorted(glob) 정렬이 유지된다.
+    """
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        pdfium = None
+
+    if pdfium is not None:
+        pdf = pdfium.PdfDocument(pdf_path)
+        try:
+            total = len(pdf)
+            start = (first_page - 1) if first_page else 0
+            end = min(last_page, total) if last_page else total
+            width = max(1, len(str(total)))
+            scale = dpi / 72.0
+            out = []
+            for i in range(start, end):
+                pil = pdf[i].render(scale=scale).to_pil()
+                if pil.mode != "RGB":
+                    pil = pil.convert("RGB")
+                path = f"{out_prefix}-{str(i + 1).zfill(width)}.jpg"
+                pil.save(path, "JPEG", quality=90)
+                out.append(path)
+            return out
+        finally:
+            pdf.close()
+
+    # 폴백: Poppler pdftoppm (설치돼 있는 리눅스/맥 환경)
+    cmd = ["pdftoppm", "-jpeg", "-r", str(dpi)]
+    if first_page:
+        cmd += ["-f", str(first_page)]
+    if last_page:
+        cmd += ["-l", str(last_page)]
+    cmd += [pdf_path, out_prefix]
+    subprocess.run(cmd, capture_output=True)
+    return sorted(glob.glob(f"{out_prefix}-*.jpg"))
+
 _preview_steps: list = []
 _preview_updated: bool = False
 _analysis_start_time: float = 0.0
@@ -981,10 +1024,7 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
             print(f"🧠 탐지 thinking={_active_detect_thinking} ({upload.filename})")
 
             if ext.endswith(".pdf"):
-                subprocess.run(
-                    ["pdftoppm", "-jpeg", "-r", "72", "-f", "1", "-l", "1", file_path, os.path.join(job_dir, "thumb")],
-                    capture_output=True,
-                )
+                _render_pdf_to_jpegs(file_path, os.path.join(job_dir, "thumb"), 72, first_page=1, last_page=1)
                 thumb_files = sorted(glob.glob(os.path.join(job_dir, "thumb-*.jpg")))
                 if thumb_files:
                     state["uploaded_preview"] = f"/outputs/{os.path.relpath(thumb_files[0], OUTPUT_DIR)}".replace("\\", "/")
@@ -998,10 +1038,7 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None,
-                    lambda: subprocess.run(
-                        ["pdftoppm", "-jpeg", "-r", "200", file_path, os.path.join(pages_dir, "page")],
-                        capture_output=True,
-                    ),
+                    lambda: _render_pdf_to_jpegs(file_path, os.path.join(pages_dir, "page"), 200),
                 )
                 page_imgs = sorted(glob.glob(os.path.join(pages_dir, "page-*.jpg")))
                 state["progress_step"] = "analyze"
