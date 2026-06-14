@@ -1246,6 +1246,7 @@ function PCView() {
     const listRef = useRef(null);
     const [hoveredStep, setHoveredStep] = useState(null);  // {idx, x, y, desc, step}
     const [passedSteps, setPassedSteps]     = useState(new Set());  // PASS된 step idx
+    const passedSeedRef = useRef('');  // 이어하기 시 통과 체크 시드(매뉴얼당 1회)
     const stepRefs = useRef([]);
     const prevAiResponse = useRef('');
     const prevActiveIdx = useRef(0);
@@ -1485,6 +1486,7 @@ function PCView() {
         setUploadError('');
         setUploadErrorCode('');
         setPreviewSteps([]);
+        setPassedSteps(new Set());   // 새 매뉴얼: 이전 통과 체크 초기화
         setUploading(true);
         setView('upload');
         fetch('/reset', {method:'POST'}).catch(()=>{});
@@ -1670,6 +1672,7 @@ function PCView() {
             if (passTimerRef.current) return;
             setPassToast(true);
             const latestIdx = statusRef.current.current_step_idx;
+            setPassedSteps(prev => { const n = new Set(prev); n.add(latestIdx); return n; });
             setUserSelectedIdx(null); setFlashKey(k=>k+1);
             fetch('/set-step', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({idx:latestIdx, locked:false}) }).catch(()=>{});
             passTimerRef.current = setTimeout(() => { passTimerRef.current=null; setPassToast(false); }, 1800);
@@ -1678,6 +1681,18 @@ function PCView() {
             // FAIL 메시지는 아래 큰 텍스트(ai_response)로 한 번만 표시. 음성도 ai_response effect가 처리.
         }
     }, [status.ai_result, view, ttsOn]);
+
+    /* 이어하기/매뉴얼 로드 시: 저장된 진행 단계 이전까지를 통과(✓)로 시드(매뉴얼당 1회) */
+    useEffect(() => {
+        if (view !== 'coach') return;
+        const steps = status.manual_steps;
+        if (!steps || steps.length === 0) return;
+        const key = (steps[0]?.image_url || '') + ':' + steps.length;
+        if (passedSeedRef.current === key) return;   // 같은 매뉴얼은 1회만(이후 PASS는 핸들러가 누적)
+        passedSeedRef.current = key;
+        const idx = status.current_step_idx || 0;
+        if (idx > 0) setPassedSteps(new Set(Array.from({length: idx}, (_, i) => i)));
+    }, [view, status.manual_steps, status.current_step_idx]);
 
     /* ping */
     useEffect(() => {
