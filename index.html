@@ -2281,7 +2281,7 @@ function PCView() {
                                 </button>
                                 {settingsOpen && (
                                     <div className="modal-back" onClick={() => setSettingsOpen(false)}
-                                         style={{backdropFilter:'none', WebkitBackdropFilter:'none', background:'rgba(20,20,22,0.55)'}}>
+                                         style={{backdropFilter:'none', WebkitBackdropFilter:'none', background:'var(--bg)'}}>
                                         <div className="modal-card" onClick={e=>e.stopPropagation()}
                                              style={{maxWidth:760, width:'92vw', height:'72vh', maxHeight:540,
                                                      padding:0, flexDirection:'row', alignItems:'stretch', gap:0, overflow:'hidden'}}>
