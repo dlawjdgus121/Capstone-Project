@@ -1,6 +1,7 @@
 import asyncio
 import math
 import socket
+import threading
 import time
 
 import cv2
@@ -8,6 +9,7 @@ import mediapipe as mp
 import numpy as np
 from livekit import rtc
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from config import (
     ADAPTIVE_WINDOW,
     ESP32_IP,
@@ -20,22 +22,35 @@ from config import (
     VLM_FRAME_WIDTH,
     VLM_JPEG_QUALITY,
 )
+from latency import latency_scope
 from state import clear_frame_state, hw_state, state
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 mp_hands = mp.solutions.hands
 mp_pose = mp.solutions.pose
-hands = mp_hands.Hands(
-    max_num_hands=2,
-    model_complexity=0,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
-pose = mp_pose.Pose(
-    model_complexity=0,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
+mp_lock = threading.Lock()
+vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
+
+
+def create_hands_solution():
+    return mp_hands.Hands(
+        max_num_hands=2,
+        model_complexity=0,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+
+def create_pose_solution():
+    return mp_pose.Pose(
+        model_complexity=0,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+
+hands = create_hands_solution()
+pose = create_pose_solution()
 last_vlm_encode_time = 0.0
 cached_vlm_bytes = None
 VLM_ENCODE_INTERVAL = 0.4
@@ -295,6 +310,17 @@ def handle_camera_setup(detected_hands, pose_results, now):
 
     phase = state.get("camera_setup_phase", "idle")
 
+    if phase == "aligning":
+        align_until = float(state.get("camera_setup_align_until", now + 1.5) or now)
+        remaining = max(0.0, align_until - now)
+        state["camera_setup_message"] = ""
+        state["camera_setup_countdown"] = int(math.ceil(remaining))
+        if remaining <= 0:
+            state["camera_setup_phase"] = "linear"
+            state["camera_setup_message"] = "어깨선을 찾는 중"
+            state["camera_setup_countdown"] = 0
+        return "STOP"
+
     if phase == "linear":
         shoulder_y = shoulder_center_y(pose_results)
         state["camera_setup_shoulder_y"] = shoulder_y
@@ -321,6 +347,9 @@ def handle_camera_setup(detected_hands, pose_results, now):
         if remaining <= 0:
             state["camera_setup_phase"] = "pantilt"
             camera_setup_last_servo_time = 0.0
+            if not state.get("camera_setup_tilt_sent", False):
+                sock.sendto(b"C0.0Y50.0", (ESP32_IP, UDP_PORT))
+                state["camera_setup_tilt_sent"] = True
 
         return "STOP"
 
@@ -331,6 +360,7 @@ def handle_camera_setup(detected_hands, pose_results, now):
             state["camera_setup_phase"] = "done"
             state["camera_setup_done"] = True
             state["camera_setup_message"] = "카메라 세팅이 완료됐습니다. 코칭을 시작합니다"
+            state["camera_setup_tilt_sent"] = False
             sock.sendto(b"V0.000Y0.000", (ESP32_IP, UDP_PORT))
             return "STOP"
 
@@ -657,6 +687,40 @@ def is_open_palm(hand_lms):
     return sum(f_status) >= 3
 
 
+def is_thumb_extended(hand_lms):
+    wrist = hand_lms.landmark[0]
+    thumb_tip = hand_lms.landmark[4]
+    thumb_ip = hand_lms.landmark[3]
+    return abs(thumb_tip.x - wrist.x) > abs(thumb_ip.x - wrist.x) + 0.025
+
+
+def is_thumb_pinky_tracking_pose(hand_lms):
+    fingers = get_finger_status(hand_lms)
+    index_open, middle_open, ring_open, pinky_open = fingers
+    thumb_open = is_thumb_extended(hand_lms)
+
+    wrist = hand_lms.landmark[0]
+    thumb_tip = hand_lms.landmark[4]
+    pinky_tip = hand_lms.landmark[20]
+    index_mcp = hand_lms.landmark[5]
+    pinky_mcp = hand_lms.landmark[17]
+
+    thumb_pinky_span = math.hypot(thumb_tip.x - pinky_tip.x, thumb_tip.y - pinky_tip.y)
+    palm_width = math.hypot(index_mcp.x - pinky_mcp.x, index_mcp.y - pinky_mcp.y)
+    hand_horizontal = abs(thumb_tip.y - pinky_tip.y) < max(0.10, thumb_pinky_span * 0.55)
+
+    return (
+        thumb_open
+        and pinky_open
+        and not index_open
+        and not middle_open
+        and not ring_open
+        and thumb_pinky_span > max(0.12, palm_width * 1.35)
+        and hand_horizontal
+        and wrist.y > min(index_mcp.y, pinky_mcp.y) - 0.08
+    )
+
+
 def get_hand_center(hand_lms):
     """
     손 전체 중심점.
@@ -763,6 +827,37 @@ def reset_two_hand_hold():
     reset_gesture_hold_progress()
 
 
+def _orientation(a, b, c):
+    return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)
+
+
+def _segments_cross(a, b, c, d):
+    o1 = _orientation(a, b, c)
+    o2 = _orientation(a, b, d)
+    o3 = _orientation(c, d, a)
+    o4 = _orientation(c, d, b)
+    return o1 * o2 < 0 and o3 * o4 < 0
+
+
+def is_crossed_index_x_pose(hand_a, hand_b):
+    a_lms = hand_a.landmark
+    b_lms = hand_b.landmark
+    a_mcp, a_tip = a_lms[5], a_lms[8]
+    b_mcp, b_tip = b_lms[5], b_lms[8]
+
+    a_len = math.hypot(a_tip.x - a_mcp.x, a_tip.y - a_mcp.y)
+    b_len = math.hypot(b_tip.x - b_mcp.x, b_tip.y - b_mcp.y)
+    if a_len < 0.08 or b_len < 0.08:
+        return False
+
+    a_fingers = get_finger_status(hand_a)
+    b_fingers = get_finger_status(hand_b)
+    if not a_fingers[0] or not b_fingers[0]:
+        return False
+
+    return _segments_cross(a_mcp, a_tip, b_mcp, b_tip)
+
+
 def classify_two_hand_command(detected_hands):
     """
     두 손 제스처 명령 판단.
@@ -779,23 +874,27 @@ def classify_two_hand_command(detected_hands):
     now = time.time()
     hold_required = gesture_state["two_hand_hold_required"]
 
-    if len(detected_hands) < 2:
+    if not detected_hands:
         reset_two_hand_hold()
         return "NONE"
 
-    h1 = detected_hands[0]["lms"]
-    h2 = detected_hands[1]["lms"]
+    candidate = "NONE"
+    holding_state = "NONE"
 
-    both_fist = is_fist(h1) and is_fist(h2)
-    both_palm = is_open_palm(h1) and is_open_palm(h2)
+    if len(detected_hands) >= 2:
+        h1 = detected_hands[0]["lms"]
+        h2 = detected_hands[1]["lms"]
+        if is_crossed_index_x_pose(h1, h2):
+            candidate = "TRACKING_OFF"
+            holding_state = "HOLDING_TRACKING_OFF"
 
-    if both_fist:
-        candidate = "TRACKING_OFF"
-        holding_state = "HOLDING_TRACKING_OFF"
-    elif both_palm:
+    if candidate == "NONE" and any(
+        is_thumb_pinky_tracking_pose(hand["lms"]) for hand in detected_hands
+    ):
         candidate = "TRACKING_ON"
         holding_state = "HOLDING_TRACKING_ON"
-    else:
+
+    if candidate == "NONE":
         reset_two_hand_hold()
         return "NONE"
 
@@ -868,12 +967,59 @@ def frame_size_label(width: int, height: int) -> str:
     return f"{int(width)}x{int(height)}"
 
 
+def reset_mediapipe_solutions():
+    global hands, pose
+
+    for solution in (hands, pose):
+        try:
+            solution.close()
+        except Exception:
+            pass
+
+    hands = create_hands_solution()
+    pose = create_pose_solution()
+
+
+def process_mediapipe_frame(mp_rgb):
+    global hands, pose
+
+    mp_rgb = np.ascontiguousarray(mp_rgb)
+    mp_rgb.flags.writeable = False
+    needs_pose = (
+        state.get("camera_setup_active", False)
+        and state.get("camera_setup_phase", "idle") == "linear"
+    )
+
+    with mp_lock:
+        try:
+            results = hands.process(mp_rgb)
+            pose_results = pose.process(mp_rgb) if needs_pose else None
+            return results, pose_results
+        except Exception as e:
+            print(f"[MEDIAPIPE] graph reset after error: {type(e).__name__}: {e}")
+            reset_mediapipe_solutions()
+            results = hands.process(mp_rgb)
+            pose_results = pose.process(mp_rgb) if needs_pose else None
+            return results, pose_results
+
+
 def encode_jpeg(img_bgr, width: int, height: int, quality: int) -> bytes:
-    img_out = cv2.resize(img_bgr, (width, height), interpolation=cv2.INTER_LINEAR)
-    ok, buf = cv2.imencode(".jpg", img_out, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    with latency_scope("vision.encode_jpeg.resize"):
+        img_out = cv2.resize(
+            img_bgr,
+            (width, height),
+            interpolation=cv2.INTER_LINEAR,
+        )
+    with latency_scope("vision.encode_jpeg.imencode"):
+        ok, buf = cv2.imencode(
+            ".jpg",
+            img_out,
+            [int(cv2.IMWRITE_JPEG_QUALITY), quality],
+        )
     if not ok:
         raise RuntimeError("JPEG encode failed")
-    return buf.tobytes()
+    with latency_scope("vision.encode_jpeg.tobytes"):
+        return buf.tobytes()
 
 
 def heavy_processing(img_bgr, level=2):
@@ -946,14 +1092,9 @@ def heavy_processing(img_bgr, level=2):
     )
 
     mp_rgb = cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB)
-    results = hands.process(mp_rgb)
+    results, pose_results = process_mediapipe_frame(mp_rgb)
     
     # 카메라 세팅이 완료되면 포즈 감지 스킵 (CPU 절약)
-    if not state.get("camera_setup_active", False) or state.get("camera_setup_phase", "idle") != "linear":
-        pose_results = None
-    else:
-        pose_results = pose.process(mp_rgb)
-    
     detected_hands = get_detected_hands(results)
     setup_cmd = handle_camera_setup(detected_hands, pose_results, time.time())
     control_hands = [] if setup_cmd is not None else detected_hands
@@ -990,7 +1131,7 @@ def heavy_processing(img_bgr, level=2):
 
         linear_cmd = "NONE"
 
-        if is_fist(hand_lms):
+        if False and is_fist(hand_lms):
             detected_stepper_cmd = "STOP"
             reset_linear_hold()
             gesture_state["swipe_history"].clear()
@@ -1009,7 +1150,9 @@ def heavy_processing(img_bgr, level=2):
         else:
             gesture_state["fist_logged"] = False
             gesture_state["stop_armed"] = True
-            linear_cmd = detect_index_hold_slide(hand_lms)
+            # Linear slide index-finger UP/DOWN gesture is temporarily disabled.
+            # Restore detect_index_hold_slide(hand_lms) here when reactivating it.
+            linear_cmd = "NONE"
 
             if linear_cmd == "UP":
                 detected_stepper_cmd = "UP"
@@ -1130,15 +1273,16 @@ async def process_video_track(track: rtc.VideoTrack):
         global latest_raw_frame, prev_frame_time
         async for event in video_stream:
             try:
-                rgba_frame = event.frame.convert(target_format)
-                latest_raw_frame = rgba_frame
+                with latency_scope("vision.recv_loop.assign_latest_frame"):
+                    latest_raw_frame = event.frame
 
-                curr_time = time.time()
-                if prev_frame_time > 0:
-                    diff = curr_time - prev_frame_time
-                    if diff > 0.01:
-                        state["current_fps"] = 1.0 / diff
-                prev_frame_time = curr_time
+                with latency_scope("vision.recv_loop.fps_update"):
+                    curr_time = time.time()
+                    if prev_frame_time > 0:
+                        diff = curr_time - prev_frame_time
+                        if diff > 0.01:
+                            state["current_fps"] = 1.0 / diff
+                    prev_frame_time = curr_time
             except Exception as e:
                 print(f"🚨 수신 오류: {e}")
                 latest_raw_frame = None
@@ -1192,11 +1336,18 @@ async def process_video_track(track: rtc.VideoTrack):
                         history.clear()
 
             try:
-                img = np.frombuffer(frame.data, dtype=np.uint8).reshape((frame.height, frame.width, 4))
-                img_bgr = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                with latency_scope("vision.process_loop.frame_convert"):
+                    rgba_frame = frame.convert(target_format)
+                with latency_scope("vision.process_loop.np_frombuffer"):
+                    img = np.frombuffer(
+                        rgba_frame.data,
+                        dtype=np.uint8,
+                    ).reshape((rgba_frame.height, rgba_frame.width, 4))
+                with latency_scope("vision.process_loop.cvtColor_rgba_to_bgr"):
+                    img_bgr = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
 
                 frame_bytes, vlm_frame_bytes, stepper_cmd, frame_meta = await loop.run_in_executor(
-                    None, heavy_processing, img_bgr, state["stream_level"]
+                    vision_executor, heavy_processing, img_bgr, state["stream_level"]
                 )
 
                 if stepper_cmd == "STOP":

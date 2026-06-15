@@ -1,3 +1,4 @@
+//리미트 스위치 내용 추가된 버전
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <ESP32Servo.h>
@@ -8,7 +9,7 @@
 // --- [1. 네트워크 및 통신 설정] ---
 const char* ssid = "Lnet";
 const char* password = "123456788";
-unsigned int localPort = 12345;
+unsigned int localPort = 12346;
 
 WiFiUDP udp;
 char packetBuffer[255];
@@ -20,7 +21,15 @@ Servo servoTilt;
 const int panPin = 18;
 const int tiltPin = 19;
 //tilt=상하
+const int upperLimitPin = 13; // 상단 스위치
+const int lowerLimitPin = 15; // 하단 스위치
 
+IPAddress lastRemoteIP;       // UI에 알림을 보내기 위한 목적지 저장용
+const int UPPER_LIMIT_PRESSED_LEVEL = LOW;  // NO + INPUT_PULLUP: unpressed=HIGH, pressed=LOW
+const int LOWER_LIMIT_PRESSED_LEVEL = LOW;  // NO + INPUT_PULLUP: unpressed=HIGH, pressed=LOW
+
+uint16_t lastRemotePort = 0;  
+bool isShuttingDown = false;
 bool isServoAttached = false;
 
 // 실제 서보 현재 위치
@@ -30,7 +39,7 @@ float currentTilt = 90.0;
 const float PAN_MIN_LIMIT = 40.0;
 const float PAN_MAX_LIMIT = 140.0;
 const float TILT_MIN_LIMIT = 50.0;
-const float TILT_MAX_LIMIT = 140.0;
+const float TILT_MAX_LIMIT = 120.0;
 
 // ESP32 내부에서 부드럽게 만든 목표 위치
 float targetPan = 90.0;
@@ -76,8 +85,16 @@ const int dirPin = 14;
 
 AccelStepper stepper(AccelStepper::DRIVER, stepPin, dirPin);
 
+const unsigned long LIMIT_DEBOUNCE_MS = 50;
+bool upperLimitPressed = false;
+bool lowerLimitPressed = false;
+bool upperLimitRawLast = false;
+bool lowerLimitRawLast = false;
+unsigned long upperLimitRawChangedAt = 0;
+unsigned long lowerLimitRawChangedAt = 0;
+
 // 🔧 현재 0.5A + 1/16 스텝 상태에서 더 빠르게 동작하도록 조정
-float max_speed = 10000.0;        // 더 빠른 최대 속도
+float max_speed = 10000.0;       // 더 빠른 최대 속도
 float acceleration = 5000.0;     // 처음부터 빠르게 올라가고 내려가도록 큰 가속도로 설정
 
 // --- [4. 유틸 함수] ---
@@ -144,6 +161,53 @@ void attachServosIfNeeded() {
   }
 }
 
+// 🔍 파이썬으로 로그 메시지를 보내는 전용 함수
+void sendLogToPython(const char* msg) {
+  if (lastRemoteIP[0] != 0) { // 파이썬 IP가 확보되었을 때만
+    udp.beginPacket(lastRemoteIP, 12346); // 파이썬의 수신 전용 포트로 
+    udp.print("LOG:");
+    udp.print(msg);
+    udp.endPacket();
+  }
+}
+
+bool readUpperLimitRaw() {
+  return digitalRead(upperLimitPin) == UPPER_LIMIT_PRESSED_LEVEL;
+}
+
+bool readLowerLimitRaw() {
+  return digitalRead(lowerLimitPin) == LOWER_LIMIT_PRESSED_LEVEL;
+}
+
+void initLimitStates() {
+  upperLimitRawLast = readUpperLimitRaw();
+  lowerLimitRawLast = readLowerLimitRaw();
+  upperLimitPressed = upperLimitRawLast;
+  lowerLimitPressed = lowerLimitRawLast;
+  upperLimitRawChangedAt = millis();
+  lowerLimitRawChangedAt = millis();
+}
+
+void updateLimitStates() {
+  unsigned long now = millis();
+  bool upperRaw = readUpperLimitRaw();
+  bool lowerRaw = readLowerLimitRaw();
+
+  if (upperRaw != upperLimitRawLast) {
+    upperLimitRawLast = upperRaw;
+    upperLimitRawChangedAt = now;
+  } else if (now - upperLimitRawChangedAt >= LIMIT_DEBOUNCE_MS) {
+    upperLimitPressed = upperRaw;
+  }
+
+  if (lowerRaw != lowerLimitRawLast) {
+    lowerLimitRawLast = lowerRaw;
+    lowerLimitRawChangedAt = now;
+  } else if (now - lowerLimitRawChangedAt >= LIMIT_DEBOUNCE_MS) {
+    lowerLimitPressed = lowerRaw;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -157,29 +221,6 @@ void setup() {
   stepper.setAcceleration(acceleration);
   stepper.setMinPulseWidth(5);
 
-  // 📋 MicrostepDriver 스위치 설정 참고:
-  // ▶ 마이크로스텝 설정 (S1, S2, S3)
-  //   • 1/1 스텝: S1=ON, S2=ON, S3=OFF → 200 pulse/rev (빠르지만 거친 움직임)
-  //   • 1/2 스텝: S1=ON, S2=OFF, S3=ON → 400 pulse/rev
-  //   • 1/4 스텝: S1=ON, S2=OFF, S3=OFF → 800 pulse/rev
-  //   • 1/8 스텝: S1=OFF, S2=ON, S3=OFF → 1600 pulse/rev
-  //   • 1/16 스텝: S1=OFF, S2=OFF, S3=ON → 3200 pulse/rev
-  //   • 1/32 스텝: S1=OFF, S2=OFF, S3=OFF → 6400 pulse/rev (느리지만 부드러움 - 소음 감소)
-  //
-  // ▶ 전류 설정 (S4, S5, S6) - 현재 S4=ON, S6=ON 상태
-  //   • 0.5A: S4=ON, S5=ON, S6=ON
-  //   • 1.0A: S4=ON, S5=OFF, S6=ON
-  //   • 1.5A: S4=ON, S5=ON, S6=OFF
-  //   • 2.0A: S4=ON, S5=OFF, S6=OFF
-  //   • 2.5A: S4=OFF, S5=ON, S6=ON
-  //   • 3.0A: S4=OFF, S5=OFF, S6=ON
-  //   • 3.5A: S4=OFF, S5=OFF, S6=OFF
-  //
-  // 💡 소음 줄이기 팁:
-  //    1. 1/16 또는 1/32 스텝으로 설정 (S1, S2, S3 조정)
-  //    2. 부드러운 가속도 유지 (acceleration = 120.0 적용됨)
-  //    3. 원하면 max_speed를 더 낮춰도 됨 (현재: 1800.0)
-
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -192,6 +233,10 @@ void setup() {
   Serial.println();
   Serial.print("WiFi 연결 완료. IP 주소: ");
   Serial.println(WiFi.localIP());
+
+  pinMode(upperLimitPin, INPUT_PULLUP);
+  pinMode(lowerLimitPin, INPUT_PULLUP);
+  initLimitStates();
 
   // --- OTA 설정 ---
   ArduinoOTA.setHostname("ESP32-3Axis-Controller");
@@ -245,6 +290,7 @@ void setup() {
 
 void loop() {
   ArduinoOTA.handle();
+  updateLimitStates();
 
   int packetSize = udp.parsePacket();
 
@@ -256,6 +302,10 @@ void loop() {
 
       String input = String(packetBuffer);
       char firstChar = packetBuffer[0];
+
+      // 🔍 파이썬/UI 측 목적지 정보 저장 (역송신용)
+      lastRemoteIP = udp.remoteIP();
+      lastRemotePort = udp.remotePort();
 
       // 1. 팬-틸트 목표값 업데이트
       if (firstChar == 'P') {
@@ -274,7 +324,7 @@ void loop() {
         }
       }
 
-      // 2. 속도기반 제어 명령 (파이썬 heavy_processing에서 V{pan}Y{tilt} 포맷 송신 대응)
+      // 2. 속도기반 제어 명령
       else if (firstChar == 'V') {
         int yIndex = input.indexOf('Y');
 
@@ -298,7 +348,7 @@ void loop() {
         }
       }
 
-      // 3. 현재 각도 기준 1회 보정 명령: C{pan_delta}Y{tilt_delta}
+      // 3. 현재 각도 기준 1회 보정 명령
       else if (firstChar == 'C') {
         int yIndex = input.indexOf('Y');
 
@@ -319,6 +369,7 @@ void loop() {
         }
       }
 
+      // 4. 상태 요청
       else if (firstChar == 'L') {
         char reply[64];
         snprintf(
@@ -342,21 +393,88 @@ void loop() {
         );
       }
 
+      // 5. 상승 명령 (상단 스위치가 눌리지 않았을 때만 작동)
       else if (firstChar == 'U') {
-        stepper.move(-2000000);
+        if (!upperLimitPressed) {
+          stepper.move(2000000);
+          sendLogToPython("⬆️ 리니어 슬라이드 상승 시작"); // 🔍 파이썬으로 전송 
+        } else {
+          sendLogToPython("⚠️ 상단 리미트 감지로 상승 차단");
+        } // <--- 이 괄호가 주석에 가려져 있던 것을 수정했습니다!
       }
 
+      // 6. 하강 명령 (하단 스위치가 눌리지 않았을 때만 작동)
       else if (firstChar == 'D') {
-        stepper.move(2000000);
+        if (!lowerLimitPressed) {
+          stepper.move(-2000000);
+          sendLogToPython("⬇️ 리니어 슬라이드 하강 시작"); // 🔍 파이썬으로 전송 
+        } // <--- 이 괄호가 주석에 가려져 있던 것을 수정했습니다!
       }
 
+      // 7. 정지 명령
       else if (firstChar == 'S') {
         stepper.stop();
         stepper.setCurrentPosition(stepper.currentPosition());
         stepper.setSpeed(0);
+        sendLogToPython("🛑 리니어 슬라이드 강제 정지"); // 🔍 파이썬으로 전송
+      }
+
+      // 8. 시스템 종료 시퀀스 명령
+      else if (firstChar == 'X') {
+        isShuttingDown = true;
+        if (!upperLimitPressed) {
+          stepper.move(2000000); 
+        } else {
+          sendLogToPython("⚠️ 상단 리미트 감지로 종료 상승 차단");
+        }
+        sendLogToPython("🛑 종료 시퀀스 개시: 슬라이드 상승"); // 🔍 파이썬으로 전송
       }
     }
   }
+
+  bool currentUpperLimit = upperLimitPressed;
+  bool currentLowerLimit = lowerLimitPressed;
+  static bool prevUpperLimit = false;
+  static bool prevLowerLimit = false;
+
+  // 1. 상단 스위치가 눌려있는 "모든 순간"에 작동 (철벽 방어)
+  if (currentUpperLimit) {
+    if (stepper.distanceToGo() > 0) { 
+      stepper.setSpeed(0);            
+      stepper.setCurrentPosition(stepper.currentPosition()); 
+    }
+    if (!prevUpperLimit && lastRemotePort != 0) {
+      udp.beginPacket(lastRemoteIP, 12346);
+      udp.print("LIMIT_TOP");
+      udp.endPacket();
+    }
+  }
+
+  // 2. 하단 스위치가 눌려있는 "모든 순간"에 작동 (철벽 방어)
+  if (currentLowerLimit) {
+    if (stepper.distanceToGo() < 0) { // 모터가 아래로 가려고 시도하면
+      stepper.setSpeed(0);
+      stepper.setCurrentPosition(stepper.currentPosition());
+    }
+    if (!prevLowerLimit && lastRemotePort != 0) {
+      udp.beginPacket(lastRemoteIP, 12346);
+      udp.print("LIMIT_BOTTOM");
+      udp.endPacket();
+    }
+  }
+
+  // 3. 시스템 종료 시퀀스 완료 처리
+  if (isShuttingDown && currentUpperLimit) {
+    stepper.setSpeed(0);
+    stepper.setCurrentPosition(0); 
+    isShuttingDown = false;
+    Serial.println("[SYSTEM] 상단 리미트 스위치 접촉 - 상승 정지 및 종료 완료");
+  }
+
+  // 이전 상태 업데이트
+  prevUpperLimit = currentUpperLimit;
+  prevLowerLimit = currentLowerLimit;
+
 
   // --- [실시간 부드러운 팬-틸트 제어] ---
   if (isServoAttached) {

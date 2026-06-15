@@ -65,6 +65,14 @@ _preview_steps: list = []
 _preview_updated: bool = False
 _analysis_start_time: float = 0.0
 
+
+def _trace_timing(label: str, start_perf: float, **details) -> None:
+    elapsed = time.perf_counter() - start_perf
+    suffix = ""
+    if details:
+        suffix = " " + " ".join(f"{key}={value}" for key, value in details.items())
+    print(f"[MANUAL_TIMING] {label}: {elapsed:.2f}s{suffix}")
+
 # gemini-3 thinking 양(낮을수록 빠름·정확도↓).
 # - 번역: 항상 low (직역 품질 동일, 무조건 빠름)
 # - 탐지/하위셀: 매뉴얼 타입으로 자동(단일 이미지→low, 복잡한 PDF→high) + 요청별 override.
@@ -73,6 +81,58 @@ TRANSLATE_THINKING = "low"
 _FORCED_THINKING = os.getenv("GEMINI_THINKING_LEVEL", "").strip() or None
 # process_manual_files에서 파일별로 세팅됨(탐지/하위셀 호출이 참조).
 _active_detect_thinking = "high"
+GEMINI_HTTP_CLIENT: httpx.AsyncClient | None = None
+GEMINI_WARMED = False
+
+
+def get_gemini_http_client() -> httpx.AsyncClient:
+    global GEMINI_HTTP_CLIENT
+    if GEMINI_HTTP_CLIENT is None or GEMINI_HTTP_CLIENT.is_closed:
+        GEMINI_HTTP_CLIENT = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
+        )
+    return GEMINI_HTTP_CLIENT
+
+
+def ensure_gemini_http_client() -> None:
+    get_gemini_http_client()
+
+
+async def close_gemini_http_client() -> None:
+    global GEMINI_HTTP_CLIENT
+    if GEMINI_HTTP_CLIENT is not None and not GEMINI_HTTP_CLIENT.is_closed:
+        await GEMINI_HTTP_CLIENT.aclose()
+    GEMINI_HTTP_CLIENT = None
+
+
+async def warmup_gemini() -> None:
+    global GEMINI_WARMED
+    if GEMINI_WARMED or not GEMINI_URL or GEMINI_URL.endswith("key="):
+        return
+
+    client = get_gemini_http_client()
+    start = time.perf_counter()
+    try:
+        res = await client.post(
+            GEMINI_URL,
+            json={
+                "contents": [{"parts": [{"text": "warmup"}]}],
+                "generationConfig": _gen_config(
+                    temperature=0,
+                    json_out=False,
+                    thinking=TRANSLATE_THINKING,
+                ),
+            },
+            timeout=15.0,
+        )
+        GEMINI_WARMED = res.status_code == 200
+        print(
+            f"[GEMINI] warmup status={res.status_code} "
+            f"elapsed={(time.perf_counter() - start) * 1000:.0f}ms"
+        )
+    except Exception as e:
+        print(f"[GEMINI] warmup failed: {type(e).__name__}: {e}")
 
 
 def _decide_thinking(filename: str, override: str | None) -> str:
@@ -108,6 +168,97 @@ def get_elapsed_time() -> float:
     if state["progress_step"] not in ("upload", "done") and _analysis_start_time > 0:
         return round(time.time() - _analysis_start_time, 1)
     return state["analysis_time"]
+
+
+def _normalized_manual_name(name: str) -> str:
+    return os.path.basename(str(name or "")).strip().lower()
+
+
+def saved_manual_name_exists(name: str, exclude_dir: str | None = None) -> bool:
+    target = _normalized_manual_name(name)
+    if not target:
+        return False
+
+    exclude_abs = os.path.abspath(exclude_dir) if exclude_dir else ""
+    for sess_dir in glob.glob(os.path.join(OUTPUT_DIR, "sess_*")):
+        if exclude_abs and os.path.abspath(sess_dir) == exclude_abs:
+            continue
+        meta_path = os.path.join(sess_dir, "session.json")
+        if not os.path.isfile(meta_path):
+            continue
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            continue
+        if _normalized_manual_name(meta.get("name", "")) == target:
+            return True
+    return False
+
+
+def load_saved_manual_by_name(name: str, exclude_dir: str | None = None) -> dict | None:
+    target = _normalized_manual_name(name)
+    if not target:
+        return None
+
+    exclude_abs = os.path.abspath(exclude_dir) if exclude_dir else ""
+    matches = []
+    for sess_dir in glob.glob(os.path.join(OUTPUT_DIR, "sess_*")):
+        if exclude_abs and os.path.abspath(sess_dir) == exclude_abs:
+            continue
+        meta_path = os.path.join(sess_dir, "session.json")
+        instr_path = os.path.join(sess_dir, "instruction.json")
+        if not os.path.isfile(meta_path) or not os.path.isfile(instr_path):
+            continue
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            continue
+        if _normalized_manual_name(meta.get("name", "")) != target:
+            continue
+        try:
+            updated = float(meta.get("updated") or os.path.getmtime(instr_path))
+        except OSError:
+            updated = 0.0
+        matches.append((updated, sess_dir, meta, instr_path))
+
+    for _, sess_dir, meta, instr_path in sorted(matches, key=lambda item: item[0], reverse=True):
+        try:
+            with open(instr_path, "r", encoding="utf-8") as f:
+                steps = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(steps, list) or not steps:
+            continue
+
+        missing = 0
+        for step in steps:
+            if not isinstance(step, dict):
+                missing += 1
+                continue
+            image_url = step.get("image_url", "")
+            image_path = os.path.join(BASE_DIR, image_url.lstrip("/"))
+            if not image_url or not os.path.isfile(image_path):
+                missing += 1
+        if missing:
+            print(f"[CACHE] 저장된 매뉴얼 이미지 누락으로 재사용 생략: {name} missing={missing}/{len(steps)}")
+            continue
+
+        preview = ""
+        thumbs = sorted(glob.glob(os.path.join(sess_dir, "thumb-*.jpg")))
+        if thumbs:
+            preview = f"/outputs/{os.path.relpath(thumbs[0], OUTPUT_DIR)}".replace("\\", "/")
+        elif steps and isinstance(steps[0], dict):
+            preview = steps[0].get("image_url", "")
+
+        return {
+            "sess_dir": sess_dir,
+            "steps": steps,
+            "meta": meta,
+            "preview": preview,
+        }
+    return None
 
 
 def _has_foreign_text(text: str) -> bool:
@@ -187,15 +338,15 @@ async def generate_step_desc(image_path: str) -> str:
             "이 그림은 조립 매뉴얼의 한 단계입니다. 무엇을 어떻게 조립하는지 "
             "한국어 한 문장으로 간단히 설명하세요. 설명 문장만 출력하고 다른 말은 하지 마세요."
         )
-        async with httpx.AsyncClient() as client:
-            res = await client.post(
-                GEMINI_URL,
-                json={
-                    "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
-                    "generationConfig": _gen_config(temperature=0.2, json_out=False, thinking=TRANSLATE_THINKING),
-                },
-                timeout=30.0,
-            )
+        client = get_gemini_http_client()
+        res = await client.post(
+            GEMINI_URL,
+            json={
+                "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
+                "generationConfig": _gen_config(temperature=0.2, json_out=False, thinking=TRANSLATE_THINKING),
+            },
+            timeout=30.0,
+        )
         if res.status_code == 200:
             return res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         print(f"🚨 설명 생성 응답 {res.status_code}: {res.text[:200]}")
@@ -801,7 +952,10 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
 
 
 async def detect_and_crop_image(client, img_path, base_idx):
+    total_perf = time.perf_counter()
+    filename = os.path.basename(img_path)
     try:
+        prep_perf = time.perf_counter()
         with Image.open(img_path) as img:
             orig_w, orig_h = img.size
             img_rgb = img.convert("RGB")
@@ -809,6 +963,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
             buf = io.BytesIO()
             img_rgb.save(buf, format="JPEG", quality=90)
             img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        _trace_timing("image.prepare", prep_perf, file=filename, size=f"{orig_w}x{orig_h}", kb=round(len(img_b64) * 3 / 4096, 1))
 
         prompt = """조립/공예 매뉴얼 이미지에서 모든 STEP을 탐지하세요.
 - step_number: 정수
@@ -817,6 +972,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
 - box_2d: [ymin,xmin,ymax,xmax] 0~1000
 {"steps":[{"step_number":int,"title":str,"desc":str,"box_2d":[int,int,int,int]}]}"""
 
+        detect_perf = time.perf_counter()
         res = await client.post(
             GEMINI_URL,
             json={
@@ -825,15 +981,21 @@ async def detect_and_crop_image(client, img_path, base_idx):
             },
             timeout=60.0,
         )
+        _trace_timing("image.gemini_detect", detect_perf, file=filename, status=res.status_code)
         if res.status_code != 200:
             print(f"🚨 이미지 탐지 응답 {res.status_code}: {res.text[:400]}")
             return []
 
+        parse_perf = time.perf_counter()
         raw_steps = extract_gemini_steps(res.json())
+        _trace_timing("image.parse_steps", parse_perf, file=filename, raw_steps=len(raw_steps))
         # 외국어 desc는 1회 배치 호출로 직역(단계별 직렬 번역 제거)
+        translate_perf = time.perf_counter()
         descs = await _translate_to_korean_batch(client, [s.get("desc", "").strip() for s in raw_steps])
+        _trace_timing("image.translate", translate_perf, file=filename, descs=len(descs))
         job_dir = os.path.dirname(img_path)
         steps = []
+        crop_perf = time.perf_counter()
         with Image.open(img_path) as full_img:
             orig_w, orig_h = full_img.size
             for idx, s in enumerate(raw_steps):
@@ -858,6 +1020,8 @@ async def detect_and_crop_image(client, img_path, base_idx):
                     "desc": desc,
                     "image_url": f"/outputs/{os.path.relpath(crop_path, OUTPUT_DIR)}".replace("\\", "/"),
                 })
+        _trace_timing("image.crop_save", crop_perf, file=filename, steps=len(steps))
+        _trace_timing("image.total", total_perf, file=filename, steps=len(steps))
         return steps
     except Exception as e:
         print(f"🚨 이미지 분석 에러: {e}")
@@ -993,6 +1157,7 @@ async def _run_text_pipeline(client, page_imgs: list, job_dir: str) -> list:
 async def process_manual_files(files: List[UploadFile], picture_mode: bool = False, thinking_override: str | None = None):
     global _analysis_start_time, _preview_steps, _preview_updated, _active_detect_thinking
     start_time = time.time()
+    process_perf = time.perf_counter()
     _analysis_start_time = start_time
     _preview_steps = []
     _preview_updated = False
@@ -1009,27 +1174,68 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
         }
     )
     job_dir = os.path.join(OUTPUT_DIR, f"sess_{int(start_time)}")
-    os.makedirs(job_dir, exist_ok=True)
     all_steps = []
 
-    async with httpx.AsyncClient() as client:
-        for upload in files:
+    if len(files) == 1:
+        upload_name = files[0].filename
+        cache_perf = time.perf_counter()
+        cached_manual = load_saved_manual_by_name(upload_name, exclude_dir=job_dir)
+        _trace_timing("manual.cache_lookup", cache_perf, file=upload_name, hit=bool(cached_manual))
+        if cached_manual:
+            cached_steps = cached_manual["steps"]
+            state.update(
+                {
+                    "manual_steps": cached_steps,
+                    "is_analyzed": True,
+                    "analysis_time": round(time.time() - start_time, 2),
+                    "current_step_idx": 0,
+                    "pending_step_idx": None,
+                    "pass_hold_until": 0.0,
+                    "pass_transition_id": 0,
+                    "progress_step": "done",
+                    "camera_setup_done": False,
+                    "camera_setup_active": False,
+                    "camera_setup_phase": "idle",
+                    "file_info": {"name": upload_name, "pages": 0, "steps": len(cached_steps)},
+                    "uploaded_preview": cached_manual.get("preview", ""),
+                }
+            )
+            save_perf = time.perf_counter()
+            save_session()
+            _trace_timing("manual.save_session", save_perf)
+            print(f"[CACHE] 동일한 매뉴얼 이름 감지 — 저장된 분석 재사용: {upload_name}")
+            print(f"[PRELOAD] 동일한 매뉴얼 이름이 이미 저장되어 있어 백그라운드 preload 생략: {upload_name}")
+            print(f"✅ [SUCCESS] 분석 완료 — {len(cached_steps)}개 STEP, {state['analysis_time']}s")
+            _trace_timing("manual.total", process_perf, steps=len(cached_steps), duplicate=True, cache=True)
+            return {"status": "success", "steps": cached_steps}
+
+    os.makedirs(job_dir, exist_ok=True)
+    client = get_gemini_http_client()
+    for upload in files:
+            file_perf = time.perf_counter()
             file_path = os.path.join(job_dir, upload.filename)
             with open(file_path, "wb") as out:
                 out.write(await upload.read())
             ext = upload.filename.lower()
             state["file_info"]["name"] = upload.filename
             state["uploaded_preview"] = ""
+            try:
+                file_size_kb = round(os.path.getsize(file_path) / 1024, 1)
+            except OSError:
+                file_size_kb = 0
+            _trace_timing("manual.file_save", file_perf, file=upload.filename, kb=file_size_kb)
 
             # 탐지/하위셀 thinking 레벨: 파일 타입 자동 + 요청 override(번역은 항상 low 유지)
             _active_detect_thinking = _decide_thinking(upload.filename, thinking_override)
             print(f"🧠 탐지 thinking={_active_detect_thinking} ({upload.filename})")
 
             if ext.endswith(".pdf"):
+                thumb_perf = time.perf_counter()
                 _render_pdf_to_jpegs(file_path, os.path.join(job_dir, "thumb"), 72, first_page=1, last_page=1)
                 thumb_files = sorted(glob.glob(os.path.join(job_dir, "thumb-*.jpg")))
                 if thumb_files:
                     state["uploaded_preview"] = f"/outputs/{os.path.relpath(thumb_files[0], OUTPUT_DIR)}".replace("\\", "/")
+                _trace_timing("manual.pdf_thumb", thumb_perf, file=upload.filename, thumbs=len(thumb_files))
             elif ext.endswith((".png", ".jpg", ".jpeg")):
                 state["uploaded_preview"] = f"/outputs/{os.path.relpath(file_path, OUTPUT_DIR)}".replace("\\", "/")
 
@@ -1038,22 +1244,30 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
                 os.makedirs(pages_dir, exist_ok=True)
                 state["progress_step"] = "render"
                 loop = asyncio.get_event_loop()
+                render_perf = time.perf_counter()
                 await loop.run_in_executor(
                     None,
                     lambda: _render_pdf_to_jpegs(file_path, os.path.join(pages_dir, "page"), 200),
                 )
                 page_imgs = sorted(glob.glob(os.path.join(pages_dir, "page-*.jpg")))
+                _trace_timing("manual.pdf_render", render_perf, file=upload.filename, pages=len(page_imgs))
                 state["progress_step"] = "analyze"
                 if picture_mode:
                     # 명시적 그림형 강제(토글 ON 등)
+                    pipeline_perf = time.perf_counter()
                     all_steps.extend(await _run_picture_pipeline(client, page_imgs, job_dir))
+                    _trace_timing("manual.picture_pipeline", pipeline_perf, file=upload.filename, total_steps=len(all_steps))
                 else:
                     # 표준(텍스트형) 분석을 먼저 시도
+                    pipeline_perf = time.perf_counter()
                     text_steps = await _run_text_pipeline(client, page_imgs, job_dir)
+                    _trace_timing("manual.text_pipeline", pipeline_perf, file=upload.filename, steps=len(text_steps))
                     if len(text_steps) >= 2:
                         # 하위셀이 여러 개인 STEP은 N-1, N-2 … 로 분할
                         state["progress_step"] = "substep"
+                        substep_perf = time.perf_counter()
                         text_steps = await _expand_substeps(client, text_steps, job_dir)
+                        _trace_timing("manual.substep_expand", substep_perf, file=upload.filename, steps=len(text_steps))
                         all_steps.extend(text_steps)
                     else:
                         # STEP 번호가 거의 안 잡힘 → 번호 없는 그림형 매뉴얼로 판단, 자동 전환
@@ -1062,10 +1276,15 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
                         _preview_updated = True
                         state["manual_steps"] = []
                         state["file_info"]["steps"] = 0
+                        fallback_perf = time.perf_counter()
                         all_steps.extend(await _run_picture_pipeline(client, page_imgs, job_dir))
+                        _trace_timing("manual.picture_fallback", fallback_perf, file=upload.filename, total_steps=len(all_steps))
             elif ext.endswith((".png", ".jpg", ".jpeg")):
+                pipeline_perf = time.perf_counter()
                 all_steps.extend(await detect_and_crop_image(client, file_path, len(all_steps)))
+                _trace_timing("manual.image_pipeline", pipeline_perf, file=upload.filename, total_steps=len(all_steps))
 
+    postprocess_perf = time.perf_counter()
     unique, seen = [], set()
     for step in all_steps:
         if step["image_url"] not in seen:
@@ -1087,9 +1306,12 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
             if step_num(step) in (0, 999):
                 continue
         filtered.append(step)
+    _trace_timing("manual.postprocess", postprocess_perf, raw_steps=len(all_steps), unique=len(unique), filtered=len(filtered))
 
+    json_perf = time.perf_counter()
     with open(os.path.join(job_dir, "instruction.json"), "w", encoding="utf-8") as f:
         json.dump(filtered, f, ensure_ascii=False, indent=4)
+    _trace_timing("manual.write_instruction", json_perf, steps=len(filtered))
 
     state.update(
         {
@@ -1106,13 +1328,26 @@ async def process_manual_files(files: List[UploadFile], picture_mode: bool = Fal
             "camera_setup_phase": "idle",
         }
     )
+    duplicate_perf = time.perf_counter()
+    duplicate_manual_name = saved_manual_name_exists(
+        state["file_info"].get("name", ""),
+        exclude_dir=job_dir,
+    )
+    _trace_timing("manual.duplicate_check", duplicate_perf, duplicate=duplicate_manual_name)
+    save_perf = time.perf_counter()
     save_session()
-    REGISTERED_STEP_IDS.clear()
-    WARMED_STEP_IDS.clear()
-
-    if PRELOAD_MANUAL_STEPS and RUNPOD_INFERENCE_BASE_URL and filtered:
+    _trace_timing("manual.save_session", save_perf)
+    if duplicate_manual_name:
+        print(
+            f"[PRELOAD] 동일한 매뉴얼 이름이 이미 저장되어 있어 "
+            f"백그라운드 preload 생략: {state['file_info'].get('name', '')}"
+        )
+    elif PRELOAD_MANUAL_STEPS and RUNPOD_INFERENCE_BASE_URL and filtered:
+        REGISTERED_STEP_IDS.clear()
+        WARMED_STEP_IDS.clear()
         asyncio.create_task(preload_steps_to_gpu(filtered))
         print(f"🚀 [PRELOAD] 백그라운드 등록 시작 — {len(filtered)}개 STEP")
 
     print(f"✅ [SUCCESS] 분석 완료 — {len(filtered)}개 STEP, {state['analysis_time']}s")
+    _trace_timing("manual.total", process_perf, steps=len(filtered), duplicate=duplicate_manual_name)
     return {"status": "success", "steps": filtered}

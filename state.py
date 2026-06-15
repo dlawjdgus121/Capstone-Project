@@ -68,6 +68,8 @@ state = {
     "camera_setup_message": "",
     "camera_setup_countdown": 0,
     "camera_setup_countdown_started_at": 0.0,
+    "camera_setup_align_until": 0.0,
+    "camera_setup_tilt_sent": False,
     "camera_setup_shoulder_y": None,
     "camera_setup_shoulder_line_y": 0.48,
     "hardware_limit_gesture": "NONE",
@@ -77,6 +79,7 @@ state = {
     "return_home_active": False,
     "return_home_done": False,
     "hand_recognition_enabled": False,
+    "tracking_active": False,
 }
 
 hw_state = {

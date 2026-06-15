@@ -32,6 +32,7 @@
             --good:      #00875a;
             --warn:      #8a6b00;
             --bad:       #b3261e;
+            --panel:     #ffffff;
 
             --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, "Helvetica Neue", sans-serif;
             --font-mono: "SF Mono", ui-monospace, "Geist Mono", Menlo, monospace;
@@ -232,6 +233,10 @@
         .modal-card {
             position: relative; max-width: 86vw; max-height: 86vh;
             display: flex; flex-direction: column; align-items: center; gap: 14px;
+            background: #fff;
+            border: 1px solid var(--line-2);
+            border-radius: 8px;
+            box-shadow: 0 28px 80px rgba(0,0,0,0.24);
         }
         .modal-card img {
             max-width: 100%; max-height: 78vh; object-fit: contain;
@@ -900,7 +905,7 @@ function HelpModal({ onClose }) {
     );
 }
 
-function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart, onShutdown, isShuttingDown, shutdownMessage }) {
+function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart, onShutdown, onHome, isShuttingDown, shutdownMessage, shutdownDone }) {
     // 🔍 시스템 종료 중일 때 보여줄 화면
     if (isShuttingDown) {
         return (
@@ -910,7 +915,11 @@ function CompletionOverlay({ totalSteps, elapsedSeconds, onRestart, onShutdown, 
                     <h2 style={{fontSize:26, fontWeight:500, lineHeight:1.5, letterSpacing:'-0.02em', margin:'0 0 28px', color:'var(--ink)', wordBreak:'keep-all'}}>
                         {shutdownMessage || <>시스템을 종료하여<br/>카메라를 원점으로 복귀합니다.</>}
                     </h2>
-                    <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: 'var(--bad)', animation: 'live-pulse 1s infinite' }}/>
+                    {shutdownDone ? (
+                        <button className="btn-spline" onClick={onHome}>메인으로 가기</button>
+                    ) : (
+                        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: 'var(--bad)', animation: 'live-pulse 1s infinite' }}/>
+                    )}
                 </div>
             </div>
         );
@@ -1081,11 +1090,15 @@ function PCView() {
         analysis_time: 26, is_analyzed: true, step_locked: false, progress_step: 'analyze',
         ai_result: 'WAIT', current_fps: 0, stream_level: 2, gesture: 'NONE',
         gesture_holding_active: false, gesture_hold_elapsed: 0, gesture_hold_required: 1.5, gesture_hold_progress: 0,
+        tracking_active: false,
+        return_home_done: false,
     } : {
         ai_response:'대기 중...', ai_feedback:'', manual_steps:[], current_step_idx:0, has_frame:false,
         analysis_time:0, is_analyzed:false, step_locked:false, progress_step:'upload',
         ai_result:'WAIT', current_fps:0, stream_level:2, gesture:'NONE',
         gesture_holding_active:false, gesture_hold_elapsed:0, gesture_hold_required:1.5, gesture_hold_progress:0,
+        tracking_active:false,
+        return_home_done:false,
     });
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState('');
@@ -1197,13 +1210,35 @@ function PCView() {
             if (shutterTimerRef.current) clearTimeout(shutterTimerRef.current);
         };
     }, []);
+    const toKoreanSinoNumber = useCallback((n) => {
+        const digits = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+        if (n <= 0) return String(n);
+        if (n < 10) return digits[n];
+        if (n < 100) {
+            const tens = Math.floor(n / 10);
+            const ones = n % 10;
+            return (tens === 1 ? '십' : digits[tens] + '십') + digits[ones];
+        }
+        if (n < 1000) {
+            const hundreds = Math.floor(n / 100);
+            const rest = n % 100;
+            return (hundreds === 1 ? '백' : digits[hundreds] + '백') + (rest ? toKoreanSinoNumber(rest) : '');
+        }
+        return String(n);
+    }, []);
+    const normalizeTtsText = useCallback((text) => {
+        return text
+            .replace(/^\[\w+\]\s*/, '')
+            .replace(/\b(\d{1,3})\s*단계\b/g, (_, n) => `${toKoreanSinoNumber(Number(n))}단계`)
+            .trim();
+    }, [toKoreanSinoNumber]);
     const speak = useCallback((text) => {
         if (!text || !ttsOn) return;
         // 이전 재생 중지
         if (speakRef.current) { speakRef.current.pause(); speakRef.current = null; }
         window.speechSynthesis.cancel();
 
-        const clean = text.replace(/^\[\w+\]\s*/, '').trim();
+        const clean = normalizeTtsText(text);
         if (!clean) return;
 
         // edge-tts 시도
@@ -1218,7 +1253,7 @@ function PCView() {
             u.lang = 'ko-KR'; u.rate = ttsRate;
             window.speechSynthesis.speak(u);
         });
-    }, [ttsOn, ttsRate]);
+    }, [ttsOn, ttsRate, normalizeTtsText]);
 
     const handleShutdown = useCallback(async () => {
         setShutdownToast(true);
@@ -1255,8 +1290,10 @@ function PCView() {
     const [isNewStart, setIsNewStart] = React.useState(false);
     const [showCameraSetupPrompt, setShowCameraSetupPrompt] = useState(false);
     const [cameraSetupCompleteNotice, setCameraSetupCompleteNotice] = useState(false);
+    const [showCameraMountPrompt, setShowCameraMountPrompt] = useState(false);
     const cameraSetupPromptedRef = useRef(false);
     const cameraSetupCompleteShownRef = useRef(false);
+    const cameraMountPromptedRef = useRef(false);
     
     /* QR 코드 생성 — view가 바뀔 때마다 재실행해서 터널 URL 반영 */
     useEffect(() => {
@@ -1376,6 +1413,10 @@ function PCView() {
             coachStartTime.current = Date.now();
             setLiveElapsed(0);
             liveElapsedRef.current = 0;
+        }
+        if (status.has_frame && !cameraMountPromptedRef.current) {
+            cameraMountPromptedRef.current = true;
+            setShowCameraMountPrompt(true);
         }
         // 카메라 끊기면 카운터 일시 정지 (시작 시각 유지)
         if (!status.has_frame) {
@@ -1627,9 +1668,29 @@ function PCView() {
         } catch(e) {}
     }, [autoInfer]);
 
+    const toggleHandTracking = useCallback(async () => {
+        const next = !statusRef.current.tracking_active;
+        setStatus(prev => ({...prev, tracking_active: next, gesture: next ? 'TRACKING_ON' : 'TRACKING_OFF'}));
+        try {
+            await fetch('/set-tracking', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: next}),
+            });
+        } catch(e) {}
+    }, []);
+
+    const startCameraSetup = useCallback(async () => {
+        try {
+            await fetch('/start-camera-setup', { method: 'POST' });
+            setShowCameraSetupPrompt(false);
+        } catch(e) {}
+    }, []);
+
     const goHome = useCallback(async () => {
         cancelCountdown();
         setView('landing'); setUploading(false); setUserSelectedIdx(null);
+        setShutdownToast(false);
         setShowComplete(false); setModalImg(null); setShowFail(false);
     }, [cancelCountdown]);
 
@@ -1873,6 +1934,28 @@ function PCView() {
     return (
         <div style={{minHeight:'100vh', background:'var(--bg)', position:'relative'}}>
 
+            {view === 'coach' && showCameraMountPrompt && (
+                <div className="modal-back">
+                    <div style={{
+                        width:'min(420px, calc(100vw - 36px))',
+                        border:'1px solid var(--line)',
+                        borderRadius:8,
+                        background:'var(--panel)',
+                        padding:22,
+                        boxShadow:'0 24px 80px rgba(0,0,0,0.35)',
+                        textAlign:'center',
+                    }}>
+                        <div style={{fontSize:18, fontWeight:700, color:'var(--ink)', marginBottom:10}}>
+                            카메라를 거치대에 거치해주세요
+                        </div>
+                        <button className="btn-spline" onClick={() => setShowCameraMountPrompt(false)}
+                                style={{width:'100%', justifyContent:'center'}}>
+                            OK
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {view === 'coach' && showCameraSetupPrompt && (
                 <div className="modal-back">
                     <div style={{
@@ -1975,7 +2058,7 @@ function PCView() {
                 </div>
             )}
 
-           {showComplete && <CompletionOverlay totalSteps={totalSteps} elapsedSeconds={completeTime} onRestart={() => { setShowComplete(false); forceSetStep(0); }} onShutdown={handleShutdown} isShuttingDown={shutdownToast} shutdownMessage={status.hardware_notice_message || (status.return_home_done ? '카메라 원점 복귀가 끝났습니다' : null)}/> }
+           {showComplete && <CompletionOverlay totalSteps={totalSteps} elapsedSeconds={completeTime} onRestart={() => { setShowComplete(false); forceSetStep(0); }} onShutdown={handleShutdown} onHome={goHome} isShuttingDown={shutdownToast} shutdownDone={!!status.return_home_done} shutdownMessage={status.hardware_notice_message || (status.return_home_done ? '카메라 원점 복귀가 끝났습니다' : null)}/> }
             {modalImg && <ImageModal src={modalImg.src} title={modalImg.title} onClose={() => setModalImg(null)}/>}
             {cropOpen && <CropModal onAdd={addCropped} onClose={() => setCropOpen(false)}/>}
             {sessionsOpen && <SessionsModal
@@ -2281,15 +2364,16 @@ function PCView() {
                                 </button>
                                 {settingsOpen && (
                                     <div className="modal-back" onClick={() => setSettingsOpen(false)}
-                                         style={{backdropFilter:'none', WebkitBackdropFilter:'none', background:'rgba(20,20,22,0.55)'}}>
+                                         style={{backdropFilter:'none', WebkitBackdropFilter:'none', background:'rgba(20,20,22,0.92)'}}>
                                         <div className="modal-card" onClick={e=>e.stopPropagation()}
                                              style={{maxWidth:760, width:'92vw', height:'72vh', maxHeight:540,
-                                                     padding:0, flexDirection:'row', alignItems:'stretch', gap:0, overflow:'hidden'}}>
+                                                     padding:0, flexDirection:'row', alignItems:'stretch', gap:0, overflow:'hidden',
+                                                     background:'#fff'}}>
                                             <button className="modal-close" onClick={() => setSettingsOpen(false)}
                                                     style={{top:12, right:14, zIndex:5}}>✕</button>
                                             {/* 좌측 카테고리 레일 */}
                                             <div style={{width:188, flexShrink:0, borderRight:'1px solid var(--line-2)',
-                                                         background:'var(--bg)', padding:'26px 0', display:'flex', flexDirection:'column', gap:2}}>
+                                                         background:'#fff', padding:'26px 0', display:'flex', flexDirection:'column', gap:2}}>
                                                 <div className="label" style={{padding:'0 22px 16px'}}>● 설정</div>
                                                 {[
                                                     {id:'audio',   icon:'🔊', label:'오디오'},
@@ -2366,6 +2450,20 @@ function PCView() {
                                                     <div style={{fontSize:13, color:'var(--ink-3)', lineHeight:1.6, marginBottom:18}}>
                                                         카메라 팬·틸트·리니어 위치를 작업대 높이에 맞춰 자동 보정합니다.
                                                     </div>
+                                                    <button onClick={toggleHandTracking}
+                                                            style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
+                                                                    padding:'14px 4px', background:'transparent', border:'none', borderTop:'1px solid var(--line)',
+                                                                    borderBottom:'1px solid var(--line)', cursor:'pointer', marginBottom:18}}>
+                                                        <div style={{textAlign:'left'}}>
+                                                            <div style={{fontSize:14, fontWeight:500, color:'var(--ink)'}}>
+                                                                {status.tracking_active ? '손 추적 중지' : '손 추적 재개'}
+                                                            </div>
+                                                            <div className="mono" style={{fontSize:10, color:'var(--ink-4)', letterSpacing:'0.1em', marginTop:3}}>
+                                                                {status.tracking_active ? 'TRACKING ON' : 'TRACKING OFF'}
+                                                            </div>
+                                                        </div>
+                                                        <div className="toggle" data-on={!!status.tracking_active}/>
+                                                    </button>
                                                     <button className="btn-spline" style={{minWidth:200}}
                                                             onClick={async () => {
                                                                 try { await fetch('/start-camera-setup', { method: 'POST' }); setSettingsOpen(false); }

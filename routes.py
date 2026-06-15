@@ -29,6 +29,137 @@ except ImportError:
     _EDGE_TTS_OK = False
     print("⚠️ edge-tts 없음 — pip install edge-tts")
 
+SESSION_CACHE_LOCK = threading.Lock()
+SESSION_CACHE: list = []
+SESSION_CACHE_UPDATED = 0.0
+
+
+def _korean_sino_number(n: int) -> str:
+    digits = ["", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"]
+    if n <= 0:
+        return str(n)
+    if n < 10:
+        return digits[n]
+    if n < 100:
+        tens, ones = divmod(n, 10)
+        return ("십" if tens == 1 else digits[tens] + "십") + digits[ones]
+    if n < 1000:
+        hundreds, rest = divmod(n, 100)
+        prefix = "백" if hundreds == 1 else digits[hundreds] + "백"
+        return prefix + (_korean_sino_number(rest) if rest else "")
+    return str(n)
+
+
+def normalize_tts_text(text: str) -> str:
+    clean = re.sub(r'^\[\w+\]\s*', '', text.strip())
+
+    def replace_step(match: re.Match) -> str:
+        return f"{_korean_sino_number(int(match.group(1)))}단계"
+
+    return re.sub(r'\b(\d{1,3})\s*단계\b', replace_step, clean)
+
+
+def _session_dirs() -> list[tuple[float, str]]:
+    session_dirs = []
+    if not os.path.isdir(OUTPUT_DIR):
+        return session_dirs
+
+    for entry in os.scandir(OUTPUT_DIR):
+        if not entry.is_dir() or not entry.name.startswith("sess_"):
+            continue
+        instr = os.path.join(entry.path, "instruction.json")
+        if not os.path.isfile(instr):
+            continue
+        meta_path = os.path.join(entry.path, "session.json")
+        try:
+            updated = os.path.getmtime(meta_path if os.path.isfile(meta_path) else instr)
+        except OSError:
+            updated = 0.0
+        session_dirs.append((updated, entry.path))
+
+    session_dirs.sort(key=lambda item: item[0], reverse=True)
+    return session_dirs
+
+
+def refresh_sessions_cache(limit: int = 30) -> list:
+    global SESSION_CACHE, SESSION_CACHE_UPDATED
+
+    fast_out = []
+    for updated_hint, d in _session_dirs()[:limit]:
+        meta = {}
+        meta_path = os.path.join(d, "session.json")
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except Exception:
+                meta = {}
+
+        steps = None
+        if not meta.get("steps"):
+            instr = os.path.join(d, "instruction.json")
+            try:
+                with open(instr, "r", encoding="utf-8") as f:
+                    steps = json.load(f)
+            except Exception:
+                steps = []
+
+        step_count = int(meta.get("steps") or (len(steps) if steps else 0))
+        if step_count <= 0:
+            continue
+
+        preview = ""
+        thumbs = sorted(glob.glob(os.path.join(d, "thumb-*.jpg")))
+        if thumbs:
+            preview = f"/outputs/{os.path.relpath(thumbs[0], OUTPUT_DIR)}".replace("\\", "/")
+
+        fast_out.append({
+            "sess": os.path.basename(d),
+            "name": meta.get("name") or "manual",
+            "steps": step_count,
+            "current_step_idx": int(meta.get("current_step_idx", 0) or 0),
+            "analysis_time": meta.get("analysis_time", 0),
+            "updated": float(meta.get("updated") or updated_hint or 0.0),
+            "preview": preview,
+        })
+
+    with SESSION_CACHE_LOCK:
+        SESSION_CACHE = fast_out
+        SESSION_CACHE_UPDATED = time.time()
+        return list(SESSION_CACHE)
+
+
+def get_sessions_cache() -> list:
+    with SESSION_CACHE_LOCK:
+        return list(SESSION_CACHE)
+
+
+def load_all_saved_manual_steps() -> list:
+    steps_out = []
+    seen = set()
+
+    for _, d in _session_dirs():
+        instr = os.path.join(d, "instruction.json")
+        try:
+            with open(instr, "r", encoding="utf-8") as f:
+                steps = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(steps, list):
+            continue
+
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            key = (step.get("image_url", ""), step.get("desc", ""))
+            if not key[0] or key in seen:
+                continue
+            seen.add(key)
+            steps_out.append(step)
+
+    return steps_out
+
+
 def query_esp32_servo_angle() -> dict:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.settimeout(0.5)
@@ -87,11 +218,13 @@ def register_routes(app: FastAPI) -> None:
     ):
         # quality: auto(타입 자동) | fast(low) | accurate(high)
         override = {"fast": "low", "accurate": "high"}.get(quality.lower())
-        return await process_manual_files(
+        result = await process_manual_files(
             files,
             picture_mode=(picture.lower() == "true"),
             thinking_override=override,
         )
+        refresh_sessions_cache()
+        return result
 
     @app.post("/set-step")
     async def set_step(body: dict):
@@ -218,11 +351,71 @@ def register_routes(app: FastAPI) -> None:
                     json.dump(clean, f, ensure_ascii=False, indent=4)
             except Exception:
                 pass
+        refresh_sessions_cache()
         return {"status": "ok", "count": len(clean)}
 
     @app.get("/sessions")
     async def list_sessions():
         """이어하기 목록: 과거 분석 세션들을 최근순으로 반환."""
+        return {"sessions": get_sessions_cache()}
+
+        session_dirs = []
+        for entry in os.scandir(OUTPUT_DIR):
+            if not entry.is_dir() or not entry.name.startswith("sess_"):
+                continue
+            instr = os.path.join(entry.path, "instruction.json")
+            if not os.path.isfile(instr):
+                continue
+            meta_path = os.path.join(entry.path, "session.json")
+            try:
+                updated = os.path.getmtime(meta_path if os.path.isfile(meta_path) else instr)
+            except OSError:
+                updated = 0.0
+            session_dirs.append((updated, entry.path))
+
+        session_dirs.sort(key=lambda item: item[0], reverse=True)
+
+        fast_out = []
+        for updated_hint, d in session_dirs[:30]:
+            meta = {}
+            meta_path = os.path.join(d, "session.json")
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                except Exception:
+                    meta = {}
+
+            steps = None
+            if not meta.get("steps"):
+                instr = os.path.join(d, "instruction.json")
+                try:
+                    with open(instr, "r", encoding="utf-8") as f:
+                        steps = json.load(f)
+                except Exception:
+                    steps = []
+
+            step_count = int(meta.get("steps") or (len(steps) if steps else 0))
+            if step_count <= 0:
+                continue
+
+            preview = ""
+            thumbs = sorted(glob.glob(os.path.join(d, "thumb-*.jpg")))
+            if thumbs:
+                preview = f"/outputs/{os.path.relpath(thumbs[0], OUTPUT_DIR)}".replace("\\", "/")
+
+            fast_out.append({
+                "sess": os.path.basename(d),
+                "name": meta.get("name") or "매뉴얼",
+                "steps": step_count,
+                "current_step_idx": int(meta.get("current_step_idx", 0) or 0),
+                "analysis_time": meta.get("analysis_time", 0),
+                "updated": float(meta.get("updated") or updated_hint or 0.0),
+                "preview": preview,
+            })
+
+        return {"sessions": fast_out}
+
         out: list = []
         for d in glob.glob(os.path.join(OUTPUT_DIR, "sess_*")):
             instr = os.path.join(d, "instruction.json")
@@ -296,8 +489,6 @@ def register_routes(app: FastAPI) -> None:
             except Exception:
                 pass
         idx = max(0, min(idx, len(steps) - 1))
-        REGISTERED_STEP_IDS.clear()
-        WARMED_STEP_IDS.clear()
         reset_pass_transition()
         state.update({
             "manual_steps": steps,
@@ -329,6 +520,7 @@ def register_routes(app: FastAPI) -> None:
             shutil.rmtree(d)
         except Exception as e:
             return {"status": "error", "message": f"삭제 실패: {e}"}
+        refresh_sessions_cache()
         return {"status": "ok", "sess": sess}
 
     @app.post("/servo-angle")
@@ -488,6 +680,8 @@ def register_routes(app: FastAPI) -> None:
                 "camera_setup_message": "",
                 "camera_setup_countdown": 0,
                 "camera_setup_countdown_started_at": 0.0,
+                "camera_setup_align_until": 0.0,
+                "camera_setup_tilt_sent": False,
                 "camera_setup_shoulder_y": None,
                 "camera_setup_shoulder_line_y": 0.48,
                 "hardware_limit_gesture": "NONE",
@@ -525,6 +719,23 @@ def register_routes(app: FastAPI) -> None:
         state["hand_recognition_enabled"] = True
         return {"status": "ok", "hand_recognition_enabled": True}
 
+    @app.post("/set-tracking")
+    async def set_tracking(body: dict):
+        enabled = bool(body.get("enabled", False))
+        hw_state["is_servo_active"] = enabled
+        state["tracking_active"] = enabled
+        state["gesture"] = "TRACKING_ON" if enabled else "TRACKING_OFF"
+        state["gesture_holding_active"] = False
+        state["gesture_hold_elapsed"] = 0.0
+        state["gesture_hold_progress"] = 0.0
+        if not enabled:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.sendto(b"V0.000Y0.000", (ESP32_IP, UDP_PORT))
+            except Exception as e:
+                print(f"[HW] tracking stop failed: {type(e).__name__}: {e}")
+        return {"status": "ok", "tracking_active": enabled}
+
     @app.post("/disconnect-client")
     async def disconnect_client():
         returning_home = state.get("return_home_active", False)
@@ -549,15 +760,29 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/start-camera-setup")
     async def start_camera_setup():
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.sendto(b"P90.0T90.0", (ESP32_IP, UDP_PORT))
+            hw_state["current_pan"] = 90.0
+            hw_state["current_tilt"] = 90.0
+            hw_state["smooth_pan"] = 90.0
+            hw_state["smooth_tilt"] = 90.0
+            print("[SERVO] camera setup align pan=90.0deg, tilt=90.0deg")
+        except Exception as e:
+            print(f"[SERVO] camera setup align failed: {type(e).__name__}: {e}")
         state["camera_setup_active"] = True
-        state["camera_setup_phase"] = "linear"
+        state["camera_setup_phase"] = "aligning"
         state["camera_setup_done"] = False
         state["camera_setup_message"] = "어깨 위치를 찾는 중"
         state["camera_setup_message"] = "초기설정을 시작합니다"
         state["camera_setup_countdown"] = 0
-        state["camera_setup_countdown_started_at"] = 0.0
+        now = time.time()
+        state["camera_setup_countdown_started_at"] = now
+        state["camera_setup_align_until"] = now + 1.5
+        state["camera_setup_tilt_sent"] = False
         state["camera_setup_shoulder_y"] = None
         state["camera_setup_shoulder_line_y"] = 0.48
+        state["camera_setup_message"] = ""
         return {"status": "ok"}
 
     @app.post("/stop-stepper")
@@ -566,6 +791,13 @@ def register_routes(app: FastAPI) -> None:
             sock.sendto(b"S", (ESP32_IP, UDP_PORT))
         hw_state["current_stepper_state"] = "STOP"
         state["stepper_state"] = "STOP"
+        if state.get("camera_setup_active", False):
+            state["camera_setup_phase"] = "pantilt"
+            state["camera_setup_countdown"] = 0
+            state["camera_setup_message"] = "카메라 각도를 조정합니다 양 손을 작업대에 올려주세요"
+            state["camera_setup_tilt_sent"] = False
+            print("[HW] STEPPER STOP during camera setup -> continue pantilt")
+            return {"status": "ok", "camera_setup_phase": "pantilt"}
         state["camera_setup_active"] = False
         state["camera_setup_phase"] = "idle"
         state["camera_setup_message"] = "리니어슬라이드 정지"
@@ -596,9 +828,14 @@ def register_routes(app: FastAPI) -> None:
     async def shutdown():
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.sendto(b"U", (ESP32_IP, UDP_PORT))
+            sock.sendto(b"P90.0T90.0", (ESP32_IP, UDP_PORT))
         
         hw_state["current_stepper_state"] = "UP"
         hw_state["is_servo_active"] = False
+        hw_state["current_pan"] = 90.0
+        hw_state["current_tilt"] = 90.0
+        hw_state["smooth_pan"] = 90.0
+        hw_state["smooth_tilt"] = 90.0
         state["stepper_state"] = "UP"
         state["tracking_active"] = False
         state["hand_recognition_enabled"] = False
@@ -622,6 +859,8 @@ def register_routes(app: FastAPI) -> None:
         state["camera_setup_active"] = False
         state["camera_setup_phase"] = "idle"
         state["camera_setup_message"] = ""
+        state["camera_setup_align_until"] = 0.0
+        state["camera_setup_tilt_sent"] = False
         return {"status": "ok", "message": "camera setup reset"}
 
     @app.post("/trigger-vlm")
@@ -715,7 +954,7 @@ def register_routes(app: FastAPI) -> None:
             return {"error": "edge-tts 미설치"}
         if not text or not text.strip():
             return {"error": "텍스트 없음"}
-        clean = re.sub(r'^\[\w+\]\s*', '', text.strip())
+        clean = normalize_tts_text(text)
         if not clean:
             return {"error": "빈 텍스트"}
         try:

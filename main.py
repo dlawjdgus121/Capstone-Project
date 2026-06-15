@@ -13,7 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import CLOUDFLARED_BIN, ESP32_IP, OUTPUT_DIR, PRELOAD_MANUAL_STEPS, RUNPOD_INFERENCE_BASE_URL, UDP_PORT
-from routes import register_routes
+from manual import close_gemini_http_client, ensure_gemini_http_client, warmup_gemini
+from routes import load_all_saved_manual_steps, refresh_sessions_cache, register_routes
 from state import hw_state, load_session, state
 from vlm import (
     REGISTERED_STEP_IDS,
@@ -23,6 +24,19 @@ from vlm import (
     ensure_runpod_http_client,
     preload_steps_to_gpu,
 )
+
+
+async def preload_saved_manuals_to_gpu() -> None:
+    if not PRELOAD_MANUAL_STEPS or not RUNPOD_INFERENCE_BASE_URL:
+        return
+
+    steps = await asyncio.to_thread(load_all_saved_manual_steps)
+    if not steps:
+        print("[PRELOAD] 저장된 Continue 매뉴얼 없음")
+        return
+
+    print(f"🚀 [PRELOAD] 저장된 Continue 매뉴얼 전체 GPU preload 시작 — {len(steps)}개 STEP")
+    await preload_steps_to_gpu(steps)
 
 
 def align_servo_to_center() -> None:
@@ -96,15 +110,17 @@ def start_udp_listener():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     start_udp_listener() # 🔍 앱 시작 시 리스너 실행 추가
-    restored = load_session()
+    refresh_sessions_cache()
+    load_session()
+    ensure_gemini_http_client()
+    asyncio.create_task(warmup_gemini())
     ensure_runpod_http_client()
     align_servo_to_center()
 
-    if restored and PRELOAD_MANUAL_STEPS and RUNPOD_INFERENCE_BASE_URL and state.get("manual_steps"):
+    if PRELOAD_MANUAL_STEPS and RUNPOD_INFERENCE_BASE_URL:
         REGISTERED_STEP_IDS.clear()
         WARMED_STEP_IDS.clear()
-        asyncio.create_task(preload_steps_to_gpu(state["manual_steps"]))
-        print(f"🚀 [PRELOAD] 세션 복원 후 GPU 서버 등록 시작 — {len(state['manual_steps'])}개 STEP")
+        asyncio.create_task(preload_saved_manuals_to_gpu())
 
     if CLOUDFLARED_BIN and not os.getenv("MOBILE_URL"):
         def run_tunnel():
@@ -157,6 +173,7 @@ async def lifespan(app: FastAPI):
         auto_vlm_task.cancel()
         with suppress(asyncio.CancelledError):
             await auto_vlm_task
+        await close_gemini_http_client()
         await close_runpod_http_client()
 
 
