@@ -54,9 +54,9 @@ def normalize_tts_text(text: str) -> str:
     clean = re.sub(r'^\[\w+\]\s*', '', text.strip())
 
     def replace_step(match: re.Match) -> str:
-        return f"{_korean_sino_number(int(match.group(1)))}단계"
+        return f"{_korean_sino_number(int(match.group(1)))}.단계"
 
-    return re.sub(r'\b(\d{1,3})\s*단계\b', replace_step, clean)
+    return re.sub(r'(?<!\d)(\d{1,3})\s*단계', replace_step, clean)
 
 
 def _session_dirs() -> list[tuple[float, str]]:

@@ -1229,7 +1229,7 @@ function PCView() {
     const normalizeTtsText = useCallback((text) => {
         return text
             .replace(/^\[\w+\]\s*/, '')
-            .replace(/\b(\d{1,3})\s*단계\b/g, (_, n) => `${toKoreanSinoNumber(Number(n))}단계`)
+            .replace(/(?<!\d)(\d{1,3})\s*단계/g, (_, n) => `${toKoreanSinoNumber(Number(n))}.단계`)
             .trim();
     }, [toKoreanSinoNumber]);
     const speak = useCallback((text) => {
