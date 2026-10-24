@@ -10,6 +10,8 @@ import httpx
 from config import (
     BASE_DIR,
     PRELOAD_WARMUP,
+    RUNPOD_AUTH_HEADERS,
+    RUNPOD_HTTP_LIMITS,
     RUNPOD_HTTP_TIMEOUT,
     RUNPOD_INFERENCE_BASE_URL,
     RUNPOD_PREDICT_URL,
@@ -30,14 +32,14 @@ RUNPOD_HTTP_CLIENT = None
 def get_runpod_http_client() -> httpx.AsyncClient:
     global RUNPOD_HTTP_CLIENT
     if RUNPOD_HTTP_CLIENT is None or RUNPOD_HTTP_CLIENT.is_closed:
-        RUNPOD_HTTP_CLIENT = httpx.AsyncClient(timeout=RUNPOD_HTTP_TIMEOUT)
+        RUNPOD_HTTP_CLIENT = httpx.AsyncClient(timeout=RUNPOD_HTTP_TIMEOUT, limits=RUNPOD_HTTP_LIMITS, headers=RUNPOD_AUTH_HEADERS)
     return RUNPOD_HTTP_CLIENT
 
 
 def ensure_runpod_http_client() -> None:
     global RUNPOD_HTTP_CLIENT
     if RUNPOD_INFERENCE_BASE_URL and (RUNPOD_HTTP_CLIENT is None or RUNPOD_HTTP_CLIENT.is_closed):
-        RUNPOD_HTTP_CLIENT = httpx.AsyncClient(timeout=RUNPOD_HTTP_TIMEOUT)
+        RUNPOD_HTTP_CLIENT = httpx.AsyncClient(timeout=RUNPOD_HTTP_TIMEOUT, limits=RUNPOD_HTTP_LIMITS, headers=RUNPOD_AUTH_HEADERS)
         print("✅ [RUNPOD HTTP] AsyncClient 재사용 모드 시작", flush=True)
 
 
@@ -49,17 +51,33 @@ async def close_runpod_http_client() -> None:
         print("✅ [RUNPOD HTTP] AsyncClient 종료", flush=True)
 
 
-def normalize_lora_path(value: str | None) -> str:
-    # Single-adapter mode: adapter selection is owned by the serving/proxy side.
-    # Do not forward per-manual or per-step LoRA names from the web server.
-    return ""
+async def sync_registered_steps_from_server() -> None:
+    """서버의 실제 STEP_CACHE와 로컬 등록 집합을 맞춘다.
+
+    서버가 재시작되면 STEP_CACHE가 비는데 로컬 집합은 그대로 남아,
+    /set_step을 건너뛴 /predict가 400을 맞는다. 서버가 실제로 들고 있는
+    step_id만 '등록됨'으로 남기고 나머지는 버린다. 조회가 실패하면
+    전부 버린다(재등록은 느릴 뿐, 400은 복구가 안 되므로).
+    """
+    if not RUNPOD_INFERENCE_BASE_URL:
+        return
+    try:
+        resp = await get_runpod_http_client().get(f"{RUNPOD_INFERENCE_BASE_URL}/health", timeout=15.0)
+        server_ids = set(resp.json().get("cached_steps") or []) if resp.status_code == 200 else set()
+    except Exception as e:
+        print(f"⚠️ [STEP SYNC] /health 조회 실패 — 등록 집합 초기화: {type(e).__name__}: {e}", flush=True)
+        server_ids = set()
+
+    dropped = len(REGISTERED_STEP_IDS - server_ids)
+    REGISTERED_STEP_IDS.intersection_update(server_ids)
+    WARMED_STEP_IDS.intersection_update(server_ids)
+    print(
+        f"✅ [STEP SYNC] server_cache={len(server_ids)} kept={len(REGISTERED_STEP_IDS)} dropped={dropped}",
+        flush=True,
+    )
 
 
-def get_step_lora_path(step: dict) -> str:
-    return ""
-
-
-def make_vlm_step_id(manual_img_path: str, step_desc: str = "", lora_path: str = "") -> str:
+def make_vlm_step_id(manual_img_path: str, step_desc: str = "") -> str:
     raw = f"{manual_img_path}|{step_desc}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
 
@@ -122,8 +140,7 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
         print(f"[PRELOAD] {step_label}: image missing: {full_manual_path}")
         return False
 
-    lora_path = get_step_lora_path(step)
-    step_id = make_vlm_step_id(manual_img_path, step_desc, lora_path)
+    step_id = make_vlm_step_id(manual_img_path, step_desc)
     if not force:
         if warmup and step_id in WARMED_STEP_IDS:
             print(f"[PRELOAD] {step_label}: prefix already warmed step_id={step_id}")
@@ -134,7 +151,7 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
 
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0))
+        client = httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0), limits=RUNPOD_HTTP_LIMITS, headers=RUNPOD_AUTH_HEADERS)
 
     try:
         with open(full_manual_path, "rb") as f:
@@ -144,7 +161,6 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
                 data={
                     "step_id": step_id,
                     "warmup": "true" if warmup else "false",
-                    **({"lora_path": lora_path} if lora_path else {}),
                 },
             )
 
@@ -163,7 +179,6 @@ async def prepare_step_prefix(step: dict, step_index=None, warmup: bool = True, 
 
         print(
             f"[PRELOAD] {step_label}: step_id={step_id} "
-            f"lora_path={lora_path or 'base'} "
             f"warmed={payload.get('warmed')} elapsed={payload.get('elapsed_ms')}ms"
         )
         return True
@@ -183,12 +198,15 @@ async def preload_steps_to_gpu(steps: list):
         print("⚠️ [PRELOAD] step 없음 — preload 생략")
         return
 
+    await sync_registered_steps_from_server()
+
     print(f"🚀 [PRELOAD] GPU 서버에 {len(steps)}개 STEP 등록 시작")
     ok_count = 0
+    skip_count = 0
     fail_count = 0
     timeout = httpx.Timeout(180.0, connect=10.0)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, limits=RUNPOD_HTTP_LIMITS, headers=RUNPOD_AUTH_HEADERS) as client:
         for i, step in enumerate(steps):
             manual_img_path = step.get("image_url", "")
             step_desc = step.get("desc", "")
@@ -203,8 +221,11 @@ async def preload_steps_to_gpu(steps: list):
                 print(f"⚠️ [PRELOAD] STEP {i + 1}: 이미지 없음: {full_manual_path}")
                 continue
 
-            lora_path = get_step_lora_path(step)
-            step_id = make_vlm_step_id(manual_img_path, step_desc, lora_path)
+            step_id = make_vlm_step_id(manual_img_path, step_desc)
+            if step_id in (WARMED_STEP_IDS if PRELOAD_WARMUP else REGISTERED_STEP_IDS):
+                skip_count += 1
+                continue
+
             try:
                 with open(full_manual_path, "rb") as f:
                     resp = await client.post(
@@ -213,7 +234,6 @@ async def preload_steps_to_gpu(steps: list):
                         data={
                             "step_id": step_id,
                             "warmup": "true" if PRELOAD_WARMUP else "false",
-                            **({"lora_path": lora_path} if lora_path else {}),
                         },
                     )
 
@@ -226,7 +246,6 @@ async def preload_steps_to_gpu(steps: list):
                         ok_count += 1
                         print(
                             f"✅ [PRELOAD] {i + 1}/{len(steps)} step_id={step_id} "
-                            f"lora_path={lora_path or 'base'} "
                             f"warmed={payload.get('warmed')} elapsed={payload.get('elapsed_ms')}ms"
                         )
                     else:
@@ -237,11 +256,11 @@ async def preload_steps_to_gpu(steps: list):
                     print(f"🚨 [PRELOAD] STEP {i + 1} HTTP {resp.status_code}: {resp.text[:300]}")
             except Exception as e:
                 fail_count += 1
-                print(f"🚨 [PRELOAD] STEP {i + 1} 예외: {e}")
+                print(f"🚨 [PRELOAD] STEP {i + 1} 예외: {type(e).__name__}: {e}")
 
             await asyncio.sleep(0.05)
 
-    print(f"✅ [PRELOAD] 완료: success={ok_count}, fail={fail_count}")
+    print(f"✅ [PRELOAD] 완료: success={ok_count}, skip={skip_count}(서버에 이미 등록), fail={fail_count}")
 
 
 def reset_pass_transition() -> None:
@@ -304,7 +323,7 @@ async def _advance_after_pass_hold(token: int, current_idx: int, next_idx: int, 
     print(f"[PASS] advanced to STEP {next_idx + 1}")
 
 
-async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="", lora_path=""):
+async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="", _retry=False):
     global last_vlm_step_key
 
     call_start_perf = time.perf_counter()
@@ -340,8 +359,7 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
         if not os.path.exists(full_manual_path):
             return {"result": "ERROR", "reason": "이미지 없음"}
 
-        lora_path = normalize_lora_path(lora_path or state.get("manual_lora", ""))
-        step_id = make_vlm_step_id(manual_img_path, step_desc, lora_path)
+        step_id = make_vlm_step_id(manual_img_path, step_desc)
         client_start_perf = time.perf_counter()
         client = get_runpod_http_client()
         client_get_ms = elapsed_ms(client_start_perf)
@@ -353,7 +371,7 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
                 set_resp = await client.post(
                     RUNPOD_SET_STEP_URL,
                     files={"manual_image": ("manual.jpg", f, "image/jpeg")},
-                    data={"step_id": step_id, "warmup": "false", **({"lora_path": lora_path} if lora_path else {})},
+                    data={"step_id": step_id, "warmup": "false"},
                 )
             set_step_ms = elapsed_ms(set_step_start_perf)
 
@@ -369,8 +387,7 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
 
             set_payload = set_resp.json()
             print(
-                f"⏱️ [MAIN->GPU SET_STEP] step_id={step_id} "
-                f"lora_path={lora_path or 'base'} rtt={set_step_ms}ms "
+                f"⏱️ [MAIN->GPU SET_STEP] step_id={step_id} rtt={set_step_ms}ms "
                 f"gpu_elapsed={set_payload.get('elapsed_ms')}ms warmed={set_payload.get('warmed')}",
                 flush=True,
             )
@@ -390,7 +407,6 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
         predict_data = {
             "step_id": step_id,
             "web_send_time": "",
-            **({"lora_path": lora_path} if lora_path else {}),
         }
         request_prepare_ms = elapsed_ms(request_prepare_start_perf)
         predict_start_perf = time.perf_counter()
@@ -462,7 +478,6 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
 
             timing.update(
                 {
-                    "main_lora_path": lora_path,
                     "main_set_step_called": set_step_called,
                     "main_set_step_ms": set_step_ms,
                     "main_pre_predict_ms": pre_predict_ms,
@@ -509,13 +524,28 @@ async def call_runpod_inference(manual_img_path, camera_frame_bytes, step_desc="
             return pred
 
         body_preview = pred_resp.text[:300].replace("\n", " ")
+        if pred_resp.status_code == 400 and "not cached" in body_preview and not _retry:
+            # 서버가 재시작돼 STEP_CACHE가 비었다. 로컬 등록 기록을 버리고
+            # set_step부터 다시 타게 한다. 안 버리면 앱 재시작까지 400이 반복된다.
+            REGISTERED_STEP_IDS.discard(step_id)
+            WARMED_STEP_IDS.discard(step_id)
+            last_vlm_step_key = None
+            print(
+                f"♻️ [MAIN->GPU PREDICT RECOVER] step_id={step_id} 서버 캐시 미스 — "
+                f"set_step 재등록 후 1회 재시도",
+                flush=True,
+            )
+            return await call_runpod_inference(
+                manual_img_path, camera_frame_bytes, step_desc, _retry=True
+            )
+
         print(
             f"🚨 [MAIN->GPU PREDICT ERROR] step_id={step_id} http={pred_resp.status_code} "
             f"rtt={predict_rtt_ms}ms pre_predict={pre_predict_ms}ms camera={camera_kb}KB | {body_preview}",
             flush=True,
         )
         print(f"🚨 [PREDICT URL] {RUNPOD_PREDICT_URL}", flush=True)
-        return {"result": "ERROR", "reason": f"서버 오류: {pred_resp.status_code}"}
+        return {"result": "ERROR", "reason": f"서버 오류 {pred_resp.status_code}: {body_preview[:150]}"}
     except Exception as e:
         total_call_ms = elapsed_ms(call_start_perf)
         print(
@@ -595,11 +625,10 @@ async def run_vlm_analysis_once(source: str = "manual") -> dict:
         return {"status": "error", "message": "현재 STEP 이미지 없음", "source": source}
 
     desc = current_step.get("desc", "")
-    lora_path = get_step_lora_path(current_step)
     start = time.perf_counter()
     state["is_processing"] = True
     try:
-        prediction = await call_runpod_inference(image_url, vlm_frame, desc, lora_path)
+        prediction = await call_runpod_inference(image_url, vlm_frame, desc)
     finally:
         state["is_processing"] = False
 
@@ -687,7 +716,6 @@ async def coaching_loop():
                     current_step["image_url"],
                     vlm_frame,
                     current_step.get("desc", ""),
-                    get_step_lora_path(current_step),
                 )
                 if prediction:
                     result = prediction.get("result", "UNKNOWN")

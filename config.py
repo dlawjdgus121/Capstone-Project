@@ -55,7 +55,12 @@ except ImportError:
 
 API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
+# 키를 쿼리스트링이 아닌 헤더로 보내 로그/프록시에 키가 찍히는 걸 방지
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+GEMINI_HEADERS = {"x-goog-api-key": API_KEY} if API_KEY else {}
+
+INFERENCE_API_KEY = os.getenv("INFERENCE_API_KEY", "")
+RUNPOD_AUTH_HEADERS = {"X-API-Key": INFERENCE_API_KEY} if INFERENCE_API_KEY else {}
 
 raw_runpod_url = os.getenv("RUNPOD_INFERENCE_URL", "").strip()
 if raw_runpod_url:
@@ -79,7 +84,15 @@ else:
     RUNPOD_SET_STEP_URL = None
     RUNPOD_PREDICT_URL = None
 
-RUNPOD_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+# 서버 SGLANG_TIMEOUT(기본 120s)보다 짧으면 서버가 아직 처리 중인데 클라이언트가 먼저
+# 포기해서 다음 요청이 밀리는 문제가 생기므로 여유를 두고 맞춤
+RUNPOD_HTTP_TIMEOUT = httpx.Timeout(130.0, connect=10.0)
+# httpx 기본 keepalive_expiry는 5.0s로, 자동 추론 간격(5s)과 겹쳐 연결이 매번 만료됐다.
+# 서버(uvicorn timeout_keep_alive)와 함께 올려야 효과가 있다 — 한쪽만 올리면 반대쪽이 끊는다.
+RUNPOD_KEEPALIVE_EXPIRY = env_int("RUNPOD_KEEPALIVE_EXPIRY", 120)
+RUNPOD_HTTP_LIMITS = httpx.Limits(
+    max_keepalive_connections=4, max_connections=8, keepalive_expiry=RUNPOD_KEEPALIVE_EXPIRY
+)
 
 ESP32_IP = "192.168.137.194"
 UDP_PORT = 12346

@@ -14,7 +14,7 @@ import httpx
 from fastapi import UploadFile
 from PIL import Image
 
-from config import BASE_DIR, GEMINI_URL, OUTPUT_DIR, PRELOAD_MANUAL_STEPS, RUNPOD_INFERENCE_BASE_URL
+from config import API_KEY, BASE_DIR, GEMINI_HEADERS, GEMINI_URL, OUTPUT_DIR, PRELOAD_MANUAL_STEPS, RUNPOD_INFERENCE_BASE_URL
 from state import save_session, state
 from vlm import REGISTERED_STEP_IDS, WARMED_STEP_IDS, preload_steps_to_gpu
 
@@ -58,7 +58,12 @@ def _render_pdf_to_jpegs(pdf_path, out_prefix, dpi, first_page=None, last_page=N
     if last_page:
         cmd += ["-l", str(last_page)]
     cmd += [pdf_path, out_prefix]
-    subprocess.run(cmd, capture_output=True)
+    try:
+        subprocess.run(cmd, capture_output=True)
+    except FileNotFoundError:
+        raise RuntimeError(
+            "PDF 렌더러가 없습니다. `pip install pypdfium2` (권장) 또는 Poppler(pdftoppm)를 설치하세요."
+        ) from None
     return sorted(glob.glob(f"{out_prefix}-*.jpg"))
 
 _preview_steps: list = []
@@ -108,7 +113,7 @@ async def close_gemini_http_client() -> None:
 
 async def warmup_gemini() -> None:
     global GEMINI_WARMED
-    if GEMINI_WARMED or not GEMINI_URL or GEMINI_URL.endswith("key="):
+    if GEMINI_WARMED or not GEMINI_URL or not API_KEY:
         return
 
     client = get_gemini_http_client()
@@ -116,6 +121,7 @@ async def warmup_gemini() -> None:
     try:
         res = await client.post(
             GEMINI_URL,
+            headers=GEMINI_HEADERS,
             json={
                 "contents": [{"parts": [{"text": "warmup"}]}],
                 "generationConfig": _gen_config(
@@ -271,6 +277,7 @@ async def _translate_to_korean(client: httpx.AsyncClient, text: str) -> str:
     try:
         res = await client.post(
             GEMINI_URL,
+            headers=GEMINI_HEADERS,
             json={
                 "contents": [{"parts": [{"text": f"다음 텍스트를 한국어로 번역하세요. 번역문만 출력하고 다른 설명은 하지 마세요.\n\n{text}"}]}],
                 "generationConfig": _gen_config(temperature=0.1, json_out=False, thinking=TRANSLATE_THINKING),
@@ -303,6 +310,7 @@ async def _translate_to_korean_batch(client: httpx.AsyncClient, texts: list) -> 
     try:
         res = await client.post(
             GEMINI_URL,
+            headers=GEMINI_HEADERS,
             json={
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": _gen_config(thinking=TRANSLATE_THINKING),
@@ -341,6 +349,7 @@ async def generate_step_desc(image_path: str) -> str:
         client = get_gemini_http_client()
         res = await client.post(
             GEMINI_URL,
+            headers=GEMINI_HEADERS,
             json={
                 "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
                 "generationConfig": _gen_config(temperature=0.2, json_out=False, thinking=TRANSLATE_THINKING),
@@ -547,6 +556,7 @@ async def _detect_cells_in_strip(client, strip_path: str) -> list:
         )
         res = await client.post(
             GEMINI_URL,
+            headers=GEMINI_HEADERS,
             json={
                 "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
                 "generationConfig": _gen_config(),
@@ -698,6 +708,7 @@ async def analyze_picture_page(client, page_img_path: str, page_num: int, job_di
         async def call(b64):
             res = await client.post(
                 GEMINI_URL,
+                headers=GEMINI_HEADERS,
                 json={
                     "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": b64}}]}],
                     "generationConfig": _gen_config(),
@@ -890,6 +901,7 @@ async def analyze_pdf_page(client, page_img_path: str, page_num: int, job_dir: s
 
         res = await client.post(
             GEMINI_URL,
+            headers=GEMINI_HEADERS,
             json={
                 "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}]}],
                 "generationConfig": _gen_config(),
@@ -975,6 +987,7 @@ async def detect_and_crop_image(client, img_path, base_idx):
         detect_perf = time.perf_counter()
         res = await client.post(
             GEMINI_URL,
+            headers=GEMINI_HEADERS,
             json={
                 "contents": [{"parts": [{"text": prompt}, {"inlineData": {"mimeType": "image/jpeg", "data": img_b64}}]}],
                 "generationConfig": _gen_config(),

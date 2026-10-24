@@ -17,8 +17,6 @@ from manual import close_gemini_http_client, ensure_gemini_http_client, warmup_g
 from routes import load_all_saved_manual_steps, refresh_sessions_cache, register_routes
 from state import hw_state, load_session, state
 from vlm import (
-    REGISTERED_STEP_IDS,
-    WARMED_STEP_IDS,
     close_runpod_http_client,
     coaching_loop,
     ensure_runpod_http_client,
@@ -118,8 +116,8 @@ async def lifespan(app: FastAPI):
     align_servo_to_center()
 
     if PRELOAD_MANUAL_STEPS and RUNPOD_INFERENCE_BASE_URL:
-        REGISTERED_STEP_IDS.clear()
-        WARMED_STEP_IDS.clear()
+        # 집합 초기화는 preload 진입 시 sync_registered_steps_from_server()가 담당한다
+        # (서버가 아직 들고 있는 step은 재등록을 생략하기 위해).
         asyncio.create_task(preload_saved_manuals_to_gpu())
 
     if CLOUDFLARED_BIN and not os.getenv("MOBILE_URL"):

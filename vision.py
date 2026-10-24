@@ -1131,28 +1131,34 @@ def heavy_processing(img_bgr, level=2):
 
         linear_cmd = "NONE"
 
-        if False and is_fist(hand_lms):
-            detected_stepper_cmd = "STOP"
-            reset_linear_hold()
-            gesture_state["swipe_history"].clear()
-            reset_gesture_hold_progress()
-            if gesture_state["stop_armed"] and hw_state["current_stepper_state"] != "STOP":
+        if is_fist(hand_lms):
+            # 리니어 슬라이드가 실제로 움직이고 있을 때만 STOP
+            current_linear_state = hw_state["current_stepper_state"]
+
+            if current_linear_state in ("UP", "DOWN"):
+                detected_stepper_cmd = "STOP"
+
+                reset_linear_hold()
+                gesture_state["swipe_history"].clear()
+                reset_gesture_hold_progress()
+
                 gesture_state["last_gesture"] = "STOP"
                 set_notice_gesture("STOP", 1.0)
-                gesture_state["stop_armed"] = False
+
+                if not gesture_state.get("fist_logged", False):
+                    gesture_state["fist_logged"] = True
+                    print("✊ [GESTURE] 주먹 | 리니어 슬라이드 즉시 정지")
             else:
-                gesture_state["last_gesture"] = "TRACKING"
-            
-            if not gesture_state.get("fist_logged", False):
-                print("✊ [GESTURE] 주먹 | 슬라이드 정지")
+                # 슬라이드가 이미 정지 상태면 아무것도 하지 않음
+                detected_stepper_cmd = "NONE"
                 gesture_state["fist_logged"] = True
 
         else:
             gesture_state["fist_logged"] = False
+
             gesture_state["stop_armed"] = True
-            # Linear slide index-finger UP/DOWN gesture is temporarily disabled.
-            # Restore detect_index_hold_slide(hand_lms) here when reactivating it.
-            linear_cmd = "NONE"
+
+            linear_cmd = detect_index_hold_slide(hand_lms)
 
             if linear_cmd == "UP":
                 detected_stepper_cmd = "UP"
@@ -1162,10 +1168,8 @@ def heavy_processing(img_bgr, level=2):
                 detected_stepper_cmd = "DOWN"
                 print("⬇️ [GESTURE] 검지 아래 1.5초 유지 | 리니어 슬라이드 하강")
 
-            elif linear_cmd == "NONE":
-                if gesture_state["last_gesture"] not in ("UP", "DOWN"):
-                    gesture_state["last_gesture"] = "TRACKING"
-
+            else:
+                detected_stepper_cmd = "NONE"
         # 팬/틸트 손 추적은 리니어 슬라이드 제스처와 별개로 처리
         if hw_state["is_servo_active"]:
             now = time.time()
@@ -1193,6 +1197,14 @@ def heavy_processing(img_bgr, level=2):
                         *stable_target
                     )
                     servo_msg = f"C{pan_delta:.1f}Y{tilt_delta:.1f}"
+
+                    print(
+                        f"🎯 [SERVO CMD] "
+                        f"hand=({stable_target[0]:.3f}, {stable_target[1]:.3f}) | "
+                        f"PAN={pan_delta:+.1f}° | "
+                        f"TILT={tilt_delta:+.1f}° | "
+                        f"CMD={servo_msg}"
+                    )
 
                     sock.sendto(servo_msg.encode(), (ESP32_IP, UDP_PORT))
                     last_servo_send_time = now
