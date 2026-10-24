@@ -1162,7 +1162,8 @@ function PCView() {
     const pingIntervalRef = useRef(null);
 
     /* edge-tts 재생 함수 — 서버 /tts 엔드포인트 사용, 실패 시 Web Speech 폴백 */
-    const speakRef = useRef(null);  // 현재 재생 중인 Audio 객체
+    const speakRef = useRef(null);       // 현재 재생 중인 항목 {audio, timer}
+    const speakQueueRef = useRef([]);    // 재생 대기 중인 음성 [{clean, rate}]
 
     const triggerShutterDelayed = useCallback(() => {
         if (shutterTimerRef.current) clearTimeout(shutterTimerRef.current);
@@ -1232,28 +1233,67 @@ function PCView() {
             .replace(/\b(\d{1,3})\s*단계\b/g, (_, n) => `${toKoreanSinoNumber(Number(n))}단계`)
             .trim();
     }, [toKoreanSinoNumber]);
-    const speak = useCallback((text) => {
-        if (!text || !ttsOn) return;
-        // 이전 재생 중지
-        if (speakRef.current) { speakRef.current.pause(); speakRef.current = null; }
+    /* 음성 큐: 기본은 앞 음성이 끝난 뒤 순서대로 재생, interrupt=true 일 때만 큐를 비우고 즉시 재생 */
+    const stopSpeech = useCallback(() => {
+        speakQueueRef.current = [];
+        const cur = speakRef.current;
+        speakRef.current = null;   // 이후 도착하는 옛 항목의 이벤트는 무시됨
+        if (cur) {
+            clearTimeout(cur.timer);
+            if (cur.audio) cur.audio.pause();
+        }
         window.speechSynthesis.cancel();
+    }, []);
 
+    const playNextSpeech = useCallback(() => {
+        const item = speakQueueRef.current.shift();
+        if (!item) { speakRef.current = null; return; }
+
+        const cur = { audio: null, timer: null };
+        speakRef.current = cur;
+
+        // 이 항목이 아직 현재 항목일 때만 다음 음성으로 진행
+        const done = () => {
+            if (speakRef.current !== cur) return;
+            clearTimeout(cur.timer);
+            playNextSpeech();
+        };
+
+        let fellBack = false;
+        const fallback = () => {
+            if (fellBack || speakRef.current !== cur) return;  // 중단된 항목은 폴백하지 않음
+            fellBack = true;
+            const u = new SpeechSynthesisUtterance(item.clean);
+            u.lang = 'ko-KR'; u.rate = item.rate;
+            u.onend = done; u.onerror = done;
+            window.speechSynthesis.speak(u);
+        };
+
+        // 스트림이 멎어 ended가 오지 않아도 큐가 영영 막히지 않도록 안전장치
+        cur.timer = setTimeout(() => {
+            if (speakRef.current !== cur) return;
+            if (cur.audio) cur.audio.pause();
+            window.speechSynthesis.cancel();
+            done();
+        }, 20000);
+
+        // edge-tts 시도, 실패하면 Web Speech 폴백
+        const audio = new Audio('/tts?text=' + encodeURIComponent(item.clean));
+        audio.playbackRate = item.rate;
+        cur.audio = audio;
+        audio.onended = done;
+        audio.onerror = fallback;
+        audio.play().catch(fallback);
+    }, []);
+
+    const speak = useCallback((text, { interrupt = false } = {}) => {
+        if (!text || !ttsOn) return;
         const clean = normalizeTtsText(text);
         if (!clean) return;
-
-        // edge-tts 시도
-        const audio = new Audio('/tts?text=' + encodeURIComponent(clean));
-        audio.playbackRate = ttsRate;
-        speakRef.current = audio;
-        audio.play().catch(() => {
-            // 더 새로운 speak()가 이 audio를 교체/중단했다면 폴백하지 않음
-            // (AbortError로 인한 Web Speech 중복 재생 방지)
-            if (speakRef.current !== audio) return;
-            const u = new SpeechSynthesisUtterance(clean);
-            u.lang = 'ko-KR'; u.rate = ttsRate;
-            window.speechSynthesis.speak(u);
-        });
-    }, [ttsOn, ttsRate, normalizeTtsText]);
+        if (interrupt) stopSpeech();
+        speakQueueRef.current.push({ clean, rate: ttsRate });
+        if (!speakRef.current) playNextSpeech();
+    }, [ttsOn, ttsRate, normalizeTtsText, stopSpeech, playNextSpeech]);
 
     const handleShutdown = useCallback(async () => {
         setShutdownToast(true);
@@ -1702,8 +1742,10 @@ function PCView() {
         prevAiResponse.current = text;
         // 대기/플레이스홀더 응답은 읽지 않음(스텝 안내 음성과 겹치거나 끊는 것 방지)
         if (/^(대기|WAIT)/i.test(text.replace(/^\[\w+\]\s*/, '').trim())) return;
-        speak(text);
-    }, [status.ai_feedback, status.ai_response, status.has_frame, view, ttsOn, speak]);
+        // 새 추론 결과(PASS/FAIL)만 끊고 재생. 서버의 "잘 하셨습니다…" 같은 전환 안내(WAIT)는 큐 뒤에 붙임
+        const isNewVerdict = status.ai_result === 'PASS' || status.ai_result === 'FAIL';
+        speak(text, { interrupt: isNewVerdict });
+    }, [status.ai_feedback, status.ai_response, status.ai_result, status.has_frame, view, ttsOn, speak]);
 
     /* TTS — step change */
     useEffect(() => {
@@ -1713,8 +1755,9 @@ function PCView() {
         if (!cs) return;
         // 평면 인덱스가 아니라 매뉴얼의 실제 STEP 번호(+하위)로 안내
         const msg = cs.sub ? `${cs.step}단계 ${cs.sub}번` : `${cs.step}단계 시작합니다.`;
-        speak(msg);
-    }, [activeIdx, view, ttsOn, speak]);
+        // 사용자가 직접 이동한 경우만 끊고, PASS 후 자동 진행은 앞 음성이 끝난 뒤 안내
+        speak(msg, { interrupt: userSelectedIdx !== null });
+    }, [activeIdx, userSelectedIdx, view, ttsOn, speak]);
 
     /* settings outside-click */
     useEffect(() => {
@@ -2398,7 +2441,7 @@ function PCView() {
                                                 {settingsTab==='audio' && (<>
                                                     <h3 style={{margin:'0 0 4px', fontSize:20, fontWeight:500, letterSpacing:'-0.02em'}}>오디오</h3>
                                                     <div className="mono" style={{fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.1em', marginBottom:22}}>AUDIO</div>
-                                                    <button onClick={() => { setTtsOn(v=>!v); window.speechSynthesis.cancel(); }}
+                                                    <button onClick={() => { setTtsOn(v=>!v); stopSpeech(); }}
                                                             style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
                                                                     padding:'14px 4px', background:'transparent', border:'none', borderBottom:'1px solid var(--line)',
                                                                     cursor:'pointer'}}>
