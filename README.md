@@ -27,7 +27,7 @@
 <br/>
 
 <p align="center">
-  <img src="docs/poster.png" width="680" alt="Project poster" />
+  <img src="docs/demo.png" width="480" alt="Nunchi Coach prototype: laptop dashboard and camera rig" />
 </p>
 
 <br/>
