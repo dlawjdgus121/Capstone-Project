@@ -25,3 +25,5 @@ secrets.json
 .pio/
 .vscode/
 firmware/.pio/
+# --- [5] README 이미지는 예외로 업로드 ---
+!docs/*.png
