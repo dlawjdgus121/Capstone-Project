@@ -64,7 +64,7 @@ flowchart LR
     end
 
     subgraph CPU["CPU Web Server · FastAPI"]
-        P["Manual Parser<br/>pdftoppm + Gemini"]
+        P["Manual Parser<br/>pypdfium2 + Gemini"]
         MP["MediaPipe Hands<br/>User Tracking"]
         WS["Web Server<br/>HTTP Keep-Alive"]
     end
@@ -97,7 +97,7 @@ flowchart LR
 |:--|:--|:--|
 | Mobile | Camera | Streams the work area to the web server over WebRTC (LiveKit) |
 | Browser | Dashboard, QR, Uploader | Displays feedback, connects the mobile camera via QR code, uploads manuals |
-| CPU Server | Manual Parser | Renders PDF pages with `pdftoppm` (200 DPI) and calls Gemini in parallel to extract step images and instructions |
+| CPU Server | Manual Parser | Renders PDF pages with `pypdfium2` (200 DPI, cross-platform) and calls Gemini in parallel to extract step images, instructions, and sub-steps |
 | | MediaPipe | Tracks hand landmarks and issues camera control signals when the hand leaves the central 80% deadzone |
 | | Web Server | Reuses a global `AsyncClient` (keep-alive) for low-latency requests to the GPU server |
 | GPU Server | Fine-tuned VLM | Compares the reference step image, instruction, and live frame to produce a verdict and feedback |
@@ -132,14 +132,14 @@ F1-score<br/>
 <sub>Precision 93.9%</sub>
 </td>
 <td align="center" width="25%">
-<h3>1.8 s</h3>
+<h3>1.4 s</h3>
 End-to-end feedback latency<br/>
 <sub>target under 3 s</sub>
 </td>
 <td align="center" width="25%">
-<h3>138 s → 12 s</h3>
+<h3>4.4 s / 26.6 s</h3>
 Manual parsing time<br/>
-<sub>per PDF page</sub>
+<sub>per page, image / PDF</sub>
 </td>
 </tr>
 </table>
@@ -150,10 +150,10 @@ Manual parsing time<br/>
 
 | Stage | Average |
 |:--|--:|
-| Send image (960×540, web server → GPU) | 393.4 ms |
-| VLM inference (SGLang) | 1280.6 ms |
-| Receive result (GPU → web server) | 119.5 ms |
-| **Total end-to-end** | **1795.8 ms** |
+| Send image (960×540, web server → GPU) | 422.2 ms |
+| VLM inference (SGLang, B200) | 908.6 ms |
+| Receive result (GPU → web server) | 105.5 ms |
+| **Total end-to-end** | **1436.8 ms** |
 
 - Reusing a single HTTP client reduced network overhead from 3–4 s to about 0.5 s.
 - WebRTC frame delivery from mobile to server: about 130 ms at 720×1080.
@@ -217,12 +217,7 @@ Capstone-Project
 git clone https://github.com/dlawjdgus121/Capstone-Project.git
 cd Capstone-Project
 
-# Inference server
-cd server
-pip install -r requirements.txt
-python server.py            # serves on 0.0.0.0:8000
-
-# Client (separate terminal)
+# Client
 cd client
 pip install -r requirements.txt
 python main.py              # set SERVER_URL before running
@@ -259,12 +254,6 @@ python main.py              # set SERVER_URL before running
 | Byeonghyun Kim | Dataset capture; WebSocket communication testing; Cloudflare Tunnel integration |
 
 </details>
-
-### Contributors
-
-<a href="https://github.com/dlawjdgus121/Capstone-Project/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dlawjdgus121/Capstone-Project" />
-</a>
 
 <br/><br/>
 
